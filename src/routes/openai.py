@@ -13,8 +13,10 @@ Licensed under MIT License.
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
+
+from src.auth import verify_token
 
 from src.config import SAMPLE_RATE
 from src.models.openai import (
@@ -53,6 +55,7 @@ def set_asr_model(model: "ASRModel") -> None:
 @router.post("/v1/audio/transcriptions")
 async def openai_transcribe(
     file: UploadFile = File(..., description="Audio file to transcribe"),
+    _token: str = Depends(verify_token),
     model: str = Form("whisper-1", description="Model name (ignored, uses configured model)"),
     language: Optional[str] = Form(None, description="Language code (e.g., 'en', 'ru')"),
     prompt: Optional[str] = Form(None, description="Optional prompt (not used)"),

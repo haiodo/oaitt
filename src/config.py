@@ -99,6 +99,13 @@ CONFIDENCE_FILTER_ENABLED = os.getenv("CONFIDENCE_FILTER_ENABLED", "false").lowe
 
 
 # =============================================================================
+# Authentication Configuration
+# =============================================================================
+
+# API token for authentication (set to empty string to disable)
+AUTH_TOKEN = os.getenv("AUTH_TOKEN", "key")
+
+# =============================================================================
 # Initialize Cache Directories
 # =============================================================================
 

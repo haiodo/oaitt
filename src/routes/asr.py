@@ -12,8 +12,10 @@ Licensed under MIT License.
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
+
+from src.auth import verify_token
 
 from src.config import ASR_ENGINE, CONFIDENCE_FILTER_ENABLED, SAMPLE_RATE
 from src.models.schemas import TranscriptionResponse
@@ -44,7 +46,7 @@ def set_asr_model(model: "ASRModel") -> None:
     _asr_model = model
 
 
-@router.post("/asr")
+@router.post("/asr", dependencies=[Depends(verify_token)])
 async def transcribe(
     audio_file: UploadFile = File(..., description="Audio file to transcribe"),
     output: str = Query("json", description="Output format: text, json, vtt, srt, tsv"),
