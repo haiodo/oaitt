@@ -42,6 +42,9 @@ class OpenAISegment(BaseModel):
     compression_ratio: float = 0.0
     no_speech_prob: float = 0.0
 
+    # Characters per second observed for the segment (len(text) / (end - start))
+    chars_per_second: Optional[float] = None
+
 
 class OpenAITranscriptionResponse(BaseModel):
     """
@@ -80,5 +83,9 @@ class OpenAITranscriptionResponse(BaseModel):
     task: str = "transcribe"
     language: Optional[str] = None
     duration: Optional[float] = None
+
+    # Overall characters per second observed for the transcription (len(text) / duration)
+    chars_per_second: Optional[float] = None
+
     words: Optional[list[OpenAIWord]] = None
     segments: Optional[list[OpenAISegment]] = None

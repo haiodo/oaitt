@@ -231,11 +231,19 @@ class TransformersASR(ASRModel):
                 start_time = timestamp[0] if timestamp[0] is not None else 0
                 end_time = timestamp[1] if timestamp[1] is not None else start_time
 
+                # Compute characters per second for this segment (avoid division by zero)
+                seg_text = chunk.get("text", "").strip()
+                duration = end_time - start_time
+                chars_per_second = (
+                    round(len(seg_text) / duration, 4) if duration and duration > 0 else None
+                )
+
                 segment = Segment(
                     id=idx,
                     start=start_time,
                     end=end_time,
-                    text=chunk.get("text", "").strip(),
+                    text=seg_text,
+                    chars_per_second=chars_per_second,
                 )
 
                 # Collect words if word timestamps are enabled
@@ -254,13 +262,20 @@ class TransformersASR(ASRModel):
                 if segments:
                     first_start = segments[0].start
                     last_end = segments[-1].end
+                    # Compute chars/sec for combined segment (avoid division by zero)
+                    duration = last_end - first_start
+                    seg_text = response.text
+                    chars_per_second = (
+                        round(len(seg_text) / duration, 4) if duration and duration > 0 else None
+                    )
                     response.segments = [
                         Segment(
                             id=0,
                             start=first_start,
                             end=last_end,
-                            text=response.text,
+                            text=seg_text,
                             words=all_words,
+                            chars_per_second=chars_per_second,
                         )
                     ]
             else:

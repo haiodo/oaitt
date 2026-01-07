@@ -321,12 +321,21 @@ class WhisperXASR(ASRModel):
                 else None
             )
 
+            # Compute characters per second for this segment (avoid division by zero)
+            seg_text = seg.get("text", "").strip()
+            start_time = seg.get("start", 0)
+            end_time = seg.get("end", 0)
+            duration = end_time - start_time
+            chars_per_second = (
+                round(len(seg_text) / duration, 4) if duration and duration > 0 else None
+            )
+
             response_segments.append(
                 Segment(
                     id=idx,
-                    start=seg.get("start", 0),
-                    end=seg.get("end", 0),
-                    text=seg.get("text", "").strip(),
+                    start=start_time,
+                    end=end_time,
+                    text=seg_text,
                     words=words,
                     avg_logprob=avg_logprob,
                     no_speech_prob=no_speech_prob,
@@ -334,6 +343,7 @@ class WhisperXASR(ASRModel):
                     compression_ratio=seg.get("compression_ratio"),
                     temperature=seg.get("temperature"),
                     tokens=seg.get("tokens"),
+                    chars_per_second=chars_per_second,
                 )
             )
 

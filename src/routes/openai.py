@@ -18,13 +18,20 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from src.auth import verify_token
 
-from src.config import SAMPLE_RATE
+from src.config import (
+    SAMPLE_RATE,
+    ASR_ENGINE,
+    CONFIDENCE_FILTER_ENABLED,
+    MAX_CHARS_PER_SECOND,
+    CHARS_PER_SECOND_MULTIPLIER,
+    CHARS_PER_SECOND_MIN_AUDIO_SEC,
+)
 from src.models.openai import (
     OpenAISegment,
     OpenAITranscriptionResponse,
     OpenAIWord,
 )
-from src.models.schemas import TranscriptionResponse
+from src.models.schemas import TranscriptionResponse, ConfidenceMetrics
 from src.services.debug import save_debug_log
 from src.services.timeout import TranscriptionTimeoutError, transcribe_with_timeout
 from src.utils.audio import load_audio_from_file
@@ -166,6 +173,70 @@ async def openai_transcribe(
         # Save debug log if enabled
         save_debug_log(audio_data, result, file.filename)
 
+        # Compute characters-per-second for the whole transcription and optionally filter
+        if isinstance(result, TranscriptionResponse):
+            total_chars = len(result.text) if result.text else 0
+            chars_per_sec = total_chars / audio_duration_sec if audio_duration_sec and audio_duration_sec > 0 else None
+
+            # Ensure ConfidenceMetrics exists for augmentation
+            if result.confidence is None:
+                result.confidence = ConfidenceMetrics()
+
+            # Store per-response and per-confidence values
+            result.chars_per_second = round(chars_per_sec, 4) if chars_per_sec is not None else None
+            result.confidence.chars_per_second = round(chars_per_sec, 4) if chars_per_sec is not None else None
+
+            # Compute threshold and ratio for diagnostics
+            threshold = MAX_CHARS_PER_SECOND * CHARS_PER_SECOND_MULTIPLIER
+            result.confidence.chars_per_second_threshold = round(threshold, 4)
+            if MAX_CHARS_PER_SECOND and chars_per_sec is not None:
+                result.confidence.chars_per_second_ratio = round(chars_per_sec / MAX_CHARS_PER_SECOND, 4)
+            else:
+                result.confidence.chars_per_second_ratio = None
+
+            # If observed chars/sec is many times above baseline, mark as suspicious
+            if (
+                chars_per_sec is not None
+                and audio_duration_sec >= CHARS_PER_SECOND_MIN_AUDIO_SEC
+                and MAX_CHARS_PER_SECOND > 0
+                and result.confidence.chars_per_second_ratio is not None
+                and result.confidence.chars_per_second_ratio > CHARS_PER_SECOND_MULTIPLIER
+            ):
+                result.confidence.high_char_rate = True
+                result.confidence.is_reliable = False
+                if not result.confidence.rejection_reasons:
+                    result.confidence.rejection_reasons = []
+                result.confidence.rejection_reasons.append(
+                    f"chars_per_second={chars_per_sec:.2f} > threshold={threshold:.2f}"
+                )
+                logger.warning(f"[OpenAI API] High characters/sec detected: {chars_per_sec:.2f} chars/s (threshold={threshold:.2f})")
+
+                if CONFIDENCE_FILTER_ENABLED:
+                    logger.info("[OpenAI API] Filtering out high char-rate result (returning empty)")
+                    # Return empty responses consistent with requested response_format
+                    if response_format == "text":
+                        return PlainTextResponse(content="")
+                    elif response_format == "json":
+                        return JSONResponse(
+                            content={"text": ""},
+                            headers={"Asr-Engine": ASR_ENGINE, "X-Confidence-Filtered": "true"},
+                        )
+                    elif response_format == "verbose_json":
+                        # Return an empty verbose JSON response compatible with OpenAI
+                        empty = OpenAITranscriptionResponse(
+                            text="", task="transcribe", language=language, duration=audio_duration_sec
+                        )
+                        return JSONResponse(
+                            content=empty.model_dump(exclude_none=True),
+                            headers={"Asr-Engine": ASR_ENGINE, "X-Confidence-Filtered": "true"},
+                        )
+                    elif response_format == "srt":
+                        return PlainTextResponse(content="", media_type="text/plain")
+                    elif response_format == "vtt":
+                        return PlainTextResponse(content="WEBVTT\n\n", media_type="text/vtt")
+                    else:
+                        return PlainTextResponse(content="")
+
         # Format response based on response_format
         return _format_openai_response(
             result=result,
@@ -239,12 +310,13 @@ def _format_openai_response(
                 }
             )
 
-        # Build OpenAI-compatible response
+        # Build OpenAI-compatible response and include overall chars/sec if present
         openai_response = OpenAITranscriptionResponse(
             text=result.text,
             task="transcribe",
             language=result.language or language,
             duration=audio_duration_sec,
+            chars_per_second=result.chars_per_second,
         )
 
         # Add words and segments if available
@@ -253,7 +325,7 @@ def _format_openai_response(
             openai_segments = []
 
             for seg in result.segments:
-                # Add segment with confidence metrics
+                # Add segment with confidence metrics and chars/sec
                 openai_seg = OpenAISegment(
                     id=seg.id,
                     seek=0,  # Not tracked currently
@@ -269,6 +341,7 @@ def _format_openai_response(
                     no_speech_prob=(
                         seg.no_speech_prob if seg.no_speech_prob is not None else 0.0
                     ),
+                    chars_per_second=seg.chars_per_second,
                 )
                 openai_segments.append(openai_seg)
 

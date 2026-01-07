@@ -17,8 +17,16 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from src.auth import verify_token
 
-from src.config import ASR_ENGINE, CONFIDENCE_FILTER_ENABLED, SAMPLE_RATE
-from src.models.schemas import TranscriptionResponse
+from src.config import (
+    ASR_ENGINE,
+    CONFIDENCE_FILTER_ENABLED,
+    SAMPLE_RATE,
+    MAX_CHARS_PER_SECOND,
+    CHARS_PER_SECOND_MULTIPLIER,
+    CHARS_PER_SECOND_MIN_AUDIO_SEC,
+)
+
+from src.models.schemas import TranscriptionResponse, ConfidenceMetrics
 from src.services.debug import save_debug_log
 from src.services.timeout import TranscriptionTimeoutError, transcribe_with_timeout
 from src.utils.audio import load_audio_from_file
@@ -136,6 +144,46 @@ async def transcribe(
 
         # Save debug log if enabled
         save_debug_log(audio_data, result, audio_file.filename)
+
+        # Compute overall characters-per-second and update confidence metrics
+        if isinstance(result, TranscriptionResponse):
+            total_chars = len(result.text) if result.text else 0
+            chars_per_sec = total_chars / audio_duration_sec if audio_duration_sec > 0 else None
+
+            # Ensure ConfidenceMetrics exists so we can augment it
+            if result.confidence is None:
+                result.confidence = ConfidenceMetrics()
+
+            # Store per-response and per-confidence values
+            result.chars_per_second = round(chars_per_sec, 4) if chars_per_sec is not None else None
+            result.confidence.chars_per_second = round(chars_per_sec, 4) if chars_per_sec is not None else None
+
+            # Compute threshold and ratio information for diagnostics
+            threshold = MAX_CHARS_PER_SECOND * CHARS_PER_SECOND_MULTIPLIER
+            result.confidence.chars_per_second_threshold = round(threshold, 4)
+            if MAX_CHARS_PER_SECOND and chars_per_sec is not None:
+                result.confidence.chars_per_second_ratio = round(chars_per_sec / MAX_CHARS_PER_SECOND, 4)
+            else:
+                result.confidence.chars_per_second_ratio = None
+
+            # If observed chars/sec is many times above baseline, mark as suspicious
+            if (
+                chars_per_sec is not None
+                and audio_duration_sec >= CHARS_PER_SECOND_MIN_AUDIO_SEC
+                and MAX_CHARS_PER_SECOND > 0
+                and result.confidence.chars_per_second_ratio is not None
+                and result.confidence.chars_per_second_ratio > CHARS_PER_SECOND_MULTIPLIER
+            ):
+                result.confidence.high_char_rate = True
+                result.confidence.is_reliable = False
+                if not result.confidence.rejection_reasons:
+                    result.confidence.rejection_reasons = []
+                result.confidence.rejection_reasons.append(
+                    f"chars_per_second={chars_per_sec:.2f} > threshold={threshold:.2f}"
+                )
+                logger.warning(
+                    f"High characters/sec detected: {chars_per_sec:.2f} chars/s (threshold={threshold:.2f})"
+                )
 
         # Check confidence and optionally filter low-quality results
         if isinstance(result, TranscriptionResponse) and result.confidence:

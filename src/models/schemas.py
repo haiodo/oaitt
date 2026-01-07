@@ -39,6 +39,8 @@ class Segment(BaseModel):
     compression_ratio: Optional[float] = None
     temperature: Optional[float] = None
     tokens: Optional[list[int]] = None
+    # Characters per second in this segment (len(text) / (end - start))
+    chars_per_second: Optional[float] = None
 
 
 class ConfidenceMetrics(BaseModel):
@@ -72,6 +74,18 @@ class ConfidenceMetrics(BaseModel):
     # Ratio of words with prob < threshold
     low_prob_word_ratio: Optional[float] = None
 
+    # Observed characters per second for the entire transcription (chars/sec)
+    chars_per_second: Optional[float] = None
+
+    # Ratio of observed chars/sec to configured baseline
+    chars_per_second_ratio: Optional[float] = None
+
+    # Threshold used for chars/sec checks (e.g. baseline * multiplier)
+    chars_per_second_threshold: Optional[float] = None
+
+    # Whether chars/sec indicates potential error (too high)
+    high_char_rate: bool = False
+
     # Whether transcription passes confidence thresholds
     is_reliable: bool = True
 
@@ -87,5 +101,7 @@ class TranscriptionResponse(BaseModel):
     """
     text: str
     language: Optional[str] = None
+    # Overall characters per second for the entire transcription (len(text) / audio_duration)
+    chars_per_second: Optional[float] = None
     segments: Optional[list[Segment]] = None
     confidence: Optional[ConfidenceMetrics] = None

@@ -61,7 +61,7 @@ PORT = int(os.getenv("PORT", "9007"))
 # =============================================================================
 
 # Enable/disable adaptive timeout
-TIMEOUT_ENABLED = os.getenv("TIMEOUT_ENABLED", "true").lower() == "true"
+TIMEOUT_ENABLED = os.getenv("TIMEOUT_ENABLED", "false").lower() == "true"
 
 # Multiplier for expected processing time before timeout (e.g., 2.0 = allow 2x average time)
 TIMEOUT_MULTIPLIER = float(os.getenv("TIMEOUT_MULTIPLIER", "2.0"))
@@ -96,6 +96,18 @@ CONFIDENCE_LOW_PROB_RATIO_THRESHOLD = float(os.getenv("CONFIDENCE_LOW_PROB_RATIO
 
 # Enable/disable automatic filtering of low-confidence results
 CONFIDENCE_FILTER_ENABLED = os.getenv("CONFIDENCE_FILTER_ENABLED", "false").lower() == "true"
+
+# =============================================================================
+# Characters-per-second (chars/sec) Configuration
+# =============================================================================
+# Baseline characters per second considered normal (approx 20-30 chars/sec typical speaking rate)
+MAX_CHARS_PER_SECOND = float(os.getenv("MAX_CHARS_PER_SECOND", "25.0"))
+
+# Multiplier - if observed chars/sec exceeds baseline * multiplier, mark as suspicious
+CHARS_PER_SECOND_MULTIPLIER = float(os.getenv("CHARS_PER_SECOND_MULTIPLIER", "3.0"))
+
+# Minimum audio duration (seconds) to apply chars/sec checks (avoid noisy short-audio edge cases)
+CHARS_PER_SECOND_MIN_AUDIO_SEC = float(os.getenv("CHARS_PER_SECOND_MIN_AUDIO_SEC", "0.5"))
 
 
 # =============================================================================
