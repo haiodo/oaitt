@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 ASR_ENGINE = os.getenv("ASR_ENGINE", "transformers")
 
 # Model name for Hugging Face Transformers engine
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3-turbo")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3")
 
 # Model name for WhisperX engine
 WHISPERX_MODEL = os.getenv("WHISPERX_MODEL", "large-v3")

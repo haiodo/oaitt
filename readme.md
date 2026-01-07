@@ -90,7 +90,7 @@ pip install -r requirements.txt
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
 | `ASR_ENGINE` | `transformers` | ASR движок: `transformers` или `whisperx` |
-| `WHISPER_MODEL` | `openai/whisper-large-v3-turbo` | Модель для Transformers |
+| `WHISPER_MODEL` | `openai/whisper-large-v3` | Модель для Transformers |
 | `WHISPERX_MODEL` | `large-v3` | Модель для WhisperX |
 | `DEVICE` | `auto` | Устройство: `auto`, `cuda`, `cpu`, `mps` |
 | `COMPUTE_TYPE` | `float32` | Тип вычислений для WhisperX |
