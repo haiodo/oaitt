@@ -27,6 +27,8 @@ from src.config import (
     WHISPER_MODEL,
     GIGAAM_REVISION,
     GIGAAM_MAX_SHORT_AUDIO_SEC,
+    GIGAAM_CHUNK_SEC,
+    GIGAAM_MIN_CHUNK_SEC,
     SAMPLE_RATE,
 )
 from src.models.schemas import (
@@ -251,6 +253,8 @@ class TransformersASR(ASRModel):
         if self.is_generic_model:
             duration = get_audio_duration(audio)
             tmp_path = None
+            # If we need to fall back from longform -> chunked transcribe, record a warning
+            fallback_warning = None
             try:
                 fd, tmp_path = tempfile.mkstemp(suffix=".wav")
                 os.close(fd)
@@ -260,7 +264,49 @@ class TransformersASR(ASRModel):
                     # Prefer longform when audio exceeds configured threshold and method exists
                     if duration > GIGAAM_MAX_SHORT_AUDIO_SEC and hasattr(self.model, "transcribe_longform"):
                         logger.info(f"Using model.transcribe_longform() for duration={duration:.2f}s")
-                        raw = self.model.transcribe_longform(tmp_path)
+                        try:
+                            raw = self.model.transcribe_longform(tmp_path)
+                        except Exception as long_exc:
+                            # If longform fails (for example, VAD/pyannote couldn't load),
+                            # attempt a safe chunked fallback using the model.transcribe() API.
+                            logger.exception("model.transcribe_longform() failed; attempting chunked fallback using model.transcribe()")
+                            # Record a warning so it can be surfaced in the final output
+                            try:
+                                fallback_warning = f"transcribe_longform failed; falling back to chunked transcribe: {long_exc}"
+                            except Exception:
+                                fallback_warning = "transcribe_longform failed; falling back to chunked transcribe (exception message unavailable)"
+                            if hasattr(self.model, "transcribe"):
+                                # Chunk size (seconds) - configured via GIGAAM_CHUNK_SEC / GIGAAM_MIN_CHUNK_SEC
+                                CHUNK_SEC = GIGAAM_CHUNK_SEC
+                                MIN_CHUNK_SEC = GIGAAM_MIN_CHUNK_SEC
+                                chunk_samples = int(CHUNK_SEC * SAMPLE_RATE)
+                                num_samples = len(audio)
+                                pos = 0
+                                chunks = []
+                                # Iterate over audio in chunks and transcribe each piece, recursively splitting if needed
+                                while pos < num_samples:
+                                    end_pos = min(pos + chunk_samples, num_samples)
+                                    chunk_audio = audio[pos:end_pos]
+                                    start_sec = pos / SAMPLE_RATE
+                                    try:
+                                        subchunks = self._transcribe_chunk_with_retry(
+                                            chunk_audio, start_sec, CHUNK_SEC, MIN_CHUNK_SEC
+                                        )
+                                    except Exception:
+                                        # If even recursive splitting couldn't transcribe, propagate the error
+                                        raise
+                                    for sc in subchunks:
+                                        text = sc.get("text") or ""
+                                        bounds = sc.get("boundaries")
+                                        if text:
+                                            chunks.append({"text": text, "boundaries": bounds})
+                                    pos = end_pos
+                                # Provide the assembled chunks as the raw result (list of dicts),
+                                # which will be handled by the existing list-processing path below.
+                                raw = chunks
+                            else:
+                                # No available fallback; re-raise the original longform exception
+                                raise long_exc
                     elif hasattr(self.model, "transcribe"):
                         logger.info(f"Using model.transcribe() for duration={duration:.2f}s")
                         raw = self.model.transcribe(tmp_path)
@@ -271,12 +317,22 @@ class TransformersASR(ASRModel):
                 if isinstance(raw, str):
                     if output == "text":
                         return raw
-                    return TranscriptionResponse(text=raw.strip(), language=language)
+                    resp_obj = TranscriptionResponse(text=raw.strip(), language=language)
+                    if fallback_warning:
+                        d = resp_obj.model_dump(exclude_none=True)
+                        d.setdefault("_warnings", []).append(fallback_warning)
+                        return d
+                    return resp_obj
 
                 if isinstance(raw, dict) and "text" in raw:
                     if output == "text":
                         return raw.get("text", "")
-                    return TranscriptionResponse(text=raw.get("text", "").strip(), language=language)
+                    resp_obj = TranscriptionResponse(text=raw.get("text", "").strip(), language=language)
+                    if fallback_warning:
+                        d = resp_obj.model_dump(exclude_none=True)
+                        d.setdefault("_warnings", []).append(fallback_warning)
+                        return d
+                    return resp_obj
 
                 if isinstance(raw, (list, tuple)):
                     segments = []
@@ -300,13 +356,22 @@ class TransformersASR(ASRModel):
                     if output == "text":
                         return full_text
                     resp = TranscriptionResponse(text=full_text.strip(), language=language, segments=segments)
+                    if fallback_warning:
+                        d = resp.model_dump(exclude_none=True)
+                        d.setdefault("_warnings", []).append(fallback_warning)
+                        return d
                     return resp
 
                 # Fallback: stringify unknown formats
                 text = str(raw)
                 if output == "text":
                     return text
-                return TranscriptionResponse(text=text, language=language)
+                resp_obj = TranscriptionResponse(text=text, language=language)
+                if fallback_warning:
+                    d = resp_obj.model_dump(exclude_none=True)
+                    d.setdefault("_warnings", []).append(fallback_warning)
+                    return d
+                return resp_obj
 
             finally:
                 if tmp_path and os.path.exists(tmp_path):
@@ -314,6 +379,82 @@ class TransformersASR(ASRModel):
                         os.remove(tmp_path)
                     except Exception:
                         pass
+
+    def _transcribe_chunk_with_retry(self, chunk_audio: np.ndarray, start_sec: float, max_chunk_sec: float, min_chunk_sec: float):
+        """
+        Attempt to transcribe `chunk_audio`. If `model.transcribe()` raises a ValueError
+        indicating the chunk is too long (or asks to use longform), split the chunk into halves
+        and retry recursively until pieces are small enough or the minimum chunk size is reached.
+
+        Returns a list of dicts: [{"text": "...", "boundaries": (start, end)}, ...]
+        """
+        results: list[dict] = []
+        duration = len(chunk_audio) / SAMPLE_RATE
+        if duration <= 0:
+            return results
+
+        # If chunk is within allowed size, try to transcribe directly
+        if duration <= max_chunk_sec:
+            path = None
+            try:
+                fd, path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                sf.write(path, chunk_audio, SAMPLE_RATE)
+                # Note: caller holds model_lock when invoking fallback, so we do not re-acquire it here
+                raw_chunk = self.model.transcribe(path)
+
+                # Normalize raw_chunk into text
+                if isinstance(raw_chunk, str):
+                    text = raw_chunk.strip()
+                elif isinstance(raw_chunk, dict):
+                    text = (raw_chunk.get("text") or raw_chunk.get("transcription") or "").strip()
+                elif isinstance(raw_chunk, (list, tuple)):
+                    pieces = []
+                    for u in raw_chunk:
+                        if isinstance(u, dict):
+                            pieces.append(u.get("transcription") or u.get("text") or "")
+                        else:
+                            pieces.append(str(u))
+                    text = " ".join(p for p in pieces if p).strip()
+                else:
+                    text = str(raw_chunk).strip()
+
+                if text:
+                    results.append({"text": text, "boundaries": (start_sec, start_sec + duration)})
+                return results
+
+            except ValueError as ve:
+                msg = str(ve)
+                # If the model complains it's too long, split further and retry
+                if ("Too long wav file" in msg) or ("transcribe_longform" in msg) or ("Too long" in msg):
+                    if duration <= min_chunk_sec:
+                        # Give up and re-raise to be handled by caller
+                        raise
+                    # Split into halves and recurse
+                    mid = len(chunk_audio) // 2
+                    first = chunk_audio[:mid]
+                    second = chunk_audio[mid:]
+                    mid_sec = start_sec + mid / SAMPLE_RATE
+                    results.extend(self._transcribe_chunk_with_retry(first, start_sec, max_chunk_sec, min_chunk_sec))
+                    results.extend(self._transcribe_chunk_with_retry(second, mid_sec, max_chunk_sec, min_chunk_sec))
+                    return results
+                # If it's a different ValueError, propagate
+                raise
+            finally:
+                try:
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+
+        # If chunk is larger than allowed max, split into halves and recurse
+        mid = len(chunk_audio) // 2
+        first = chunk_audio[:mid]
+        second = chunk_audio[mid:]
+        mid_sec = start_sec + mid / SAMPLE_RATE
+        results.extend(self._transcribe_chunk_with_retry(first, start_sec, max_chunk_sec, min_chunk_sec))
+        results.extend(self._transcribe_chunk_with_retry(second, mid_sec, max_chunk_sec, min_chunk_sec))
+        return results
 
         # Otherwise use the Whisper pipeline flow
         # Prepare generation kwargs

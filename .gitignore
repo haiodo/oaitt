@@ -2,3 +2,5 @@ venv
 samples
 data
 __pycache__
+private
+private_output
