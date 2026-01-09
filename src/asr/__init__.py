@@ -16,11 +16,13 @@ Licensed under MIT License.
 from src.asr.base import ASRModel
 from src.asr.transformers import TransformersASR
 from src.asr.whisperx import WhisperXASR
+from src.asr.gigaam import GigaAMASR
 from src.asr.factory import create_asr_model
 
 __all__ = [
     "ASRModel",
     "TransformersASR",
     "WhisperXASR",
+    "GigaAMASR",
     "create_asr_model",
 ]

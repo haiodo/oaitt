@@ -23,3 +23,6 @@ pydantic
 soundfile
 librosa
 python-multipart
+hydra-core
+omegaconf
+sentencepiece

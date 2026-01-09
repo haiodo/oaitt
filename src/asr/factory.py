@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_ENGINES = {
     "transformers": "TransformersASR",
     "whisperx": "WhisperXASR",
+    "gigaam": "GigaAMASR",
 }
 
 
@@ -59,6 +60,11 @@ def create_asr_model() -> "ASRModel":
         from src.asr.transformers import TransformersASR
 
         return TransformersASR()
+
+    elif engine == "gigaam":
+        from src.asr.gigaam import GigaAMASR
+
+        return GigaAMASR()
 
     else:
         supported = ", ".join(f"'{e}'" for e in SUPPORTED_ENGINES.keys())
@@ -106,6 +112,17 @@ def get_engine_info(engine: str | None = None) -> dict:
                 "Confidence metrics per word",
                 "Multi-language alignment support",
                 "Falls back to CPU on MPS devices",
+            ],
+        },
+        "gigaam": {
+            "name": "gigaam",
+            "class": "GigaAMASR",
+            "description": "GigaAM acoustic models (CTC/RNNT/E2E) for high-quality Russian ASR",
+            "features": [
+                "State-of-the-art Russian ASR (v2/v3)",
+                "End-to-end RNNT / CTC models",
+                "Long-form transcription support via transcribe_longform",
+                "ONNX export and SSL embeddings support",
             ],
         },
     }

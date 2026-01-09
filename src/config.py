@@ -28,6 +28,19 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3")
 # Model name for WhisperX engine
 WHISPERX_MODEL = os.getenv("WHISPERX_MODEL", "large-v3")
 
+# GigaAM model configuration
+# HF repository and optional revision for GigaAM models.
+# Examples:
+# - HF repo: 'ai-sage/GigaAM-v3' (recommended)
+# - Revision: 'e2e_rnnt' (model variant inside the repo)
+# - Local package variant names used by the `gigaam` package: 'v3_e2e_rnnt', 'v3_e2e_ctc', etc.
+GIGAAM_MODEL = os.getenv("GIGAAM_MODEL", "ai-sage/GigaAM-v3")
+GIGAAM_REVISION = os.getenv("GIGAAM_REVISION", "e2e_rnnt")
+
+# Maximum audio duration (seconds) considered "short" for GigaAM `.transcribe()`.
+# For longer audio the service will try to use `model.transcribe_longform()` if available.
+GIGAAM_MAX_SHORT_AUDIO_SEC = float(os.getenv("GIGAAM_MAX_SHORT_AUDIO_SEC", "25.0"))
+
 # Device to use: "auto", "cuda", "cpu", "mps"
 DEVICE = os.getenv("DEVICE", "auto")
 
