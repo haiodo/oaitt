@@ -19,7 +19,7 @@ SAMPLES_DIR="${SAMPLES_DIR:-samples}"
 OUTPUT_DIR="${OUTPUT_DIR:-private_output}"
 
 export ASR_ENGINE=whisperx
-export WHISPERX_MODEL="${WHISPERX_MODEL:-v3-large}"
+export WHISPERX_MODEL="${WHISPERX_MODEL:-large-v3}"
 
 echo "WhisperX batch transcription"
 echo "  Samples dir: ${SAMPLES_DIR}"
