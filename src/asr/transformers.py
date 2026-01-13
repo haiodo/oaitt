@@ -104,15 +104,6 @@ class TransformersASR(ASRModel):
         """
         device = get_device()
 
-        # Whisper pipeline has generation issues on MPS (produces empty/garbage output)
-        # Force CPU for openai/whisper models on MPS devices
-        if is_mps_device(device) and "whisper" in WHISPER_MODEL.lower():
-            logger.warning(
-                "MPS detected but Whisper pipeline has generation issues on MPS. "
-                "Falling back to CPU for reliable results."
-            )
-            device = torch.device("cpu")
-
         self.torch_dtype = self._get_torch_dtype(device)
 
         logger.info(

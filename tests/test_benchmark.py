@@ -16,18 +16,25 @@ Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)
 Licensed under MIT License.
 
 Usage:
-    python -m tests.test_benchmark
+    python -m tests.test_benchmark [--mode short|long|full] [--iterations N]
+
+    Modes:
+        short (default): 20s audio, 5 iterations - quick benchmark
+        long:  60s audio, 3 iterations - tests chunked transcription
+        full:  full file (~137s), 1 iteration - complete longform test
 """
 
+import argparse
 import os
 import sys
 import time
 import signal
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 import soundfile as sf
 import requests
@@ -51,15 +58,35 @@ HEALTH_ENDPOINT = f"{SERVER_URL}/health"
 # Default API token
 API_TOKEN = "key"
 
-# Test audio duration in seconds
-TEST_AUDIO_DURATION = 29.0
+# Test modes configuration
+TEST_MODES = {
+    "short": {
+        "duration": 20.0,      # 20 seconds - within GigaAM short audio limit
+        "iterations": 5,
+        "description": "Quick benchmark with short audio",
+    },
+    "long": {
+        "duration": 60.0,      # 60 seconds - tests chunked transcription
+        "iterations": 3,
+        "description": "Chunked transcription test",
+    },
+    "full": {
+        "duration": None,      # None = use full file
+        "iterations": 1,
+        "description": "Full file longform test",
+    },
+}
+
+# Default mode
+DEFAULT_MODE = "short"
 
 # Server startup timeout in seconds
 SERVER_STARTUP_TIMEOUT = 180.0
 
 # Scripts to benchmark
 BENCHMARK_SCRIPTS = [
-    ("GigaAM", "run_gigaam.sh"),
+    ("GigaAM (Transformers)", "run_gigaam.sh"),
+    ("GigaAM (Native)", "run_gigaam_asr.sh"),
     ("Whisper Large V3 (Transformers)", "run_whisper_large_v3.sh"),
     ("WhisperX Large V3", "run_whisperx_large_v3.sh"),
 ]
@@ -70,12 +97,14 @@ class BenchmarkResult:
     """Result of a single benchmark run."""
     engine_name: str
     script_name: str
-    transcription_time: float
-    text: str
-    text_length: int
-    audio_duration: float
-    speed_ratio: float  # audio_duration / transcription_time
-    success: bool
+    transcription_time: float  # average time across iterations
+    transcription_times: List[float] = field(default_factory=list)  # all iteration times
+    text: str = ""
+    text_length: int = 0
+    audio_duration: float = 0.0
+    speed_ratio: float = 0.0  # audio_duration / transcription_time
+    iterations: int = 0
+    success: bool = False
     error: Optional[str] = None
 
 
@@ -85,6 +114,12 @@ def get_test_audio() -> Path:
     if not audio_path.exists():
         raise FileNotFoundError(f"Test audio file not found: {audio_path}")
     return audio_path
+
+
+def get_audio_file_duration(audio_path: Path) -> float:
+    """Get duration of audio file in seconds."""
+    info = sf.info(audio_path)
+    return info.duration
 
 
 def extract_audio_segment(input_path: Path, duration_sec: float = 29.0) -> Path:
@@ -146,6 +181,54 @@ def wait_for_server(timeout: float = SERVER_STARTUP_TIMEOUT, check_interval: flo
     return False
 
 
+def is_port_in_use(port: int) -> bool:
+    """Check if a port is in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+
+def wait_for_port_free(port: int, timeout: float = 30.0) -> bool:
+    """Wait until port is free."""
+    start = time.time()
+    while time.time() - start < timeout:
+        if not is_port_in_use(port):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def kill_process_on_port(port: int, exclude_pids: set = None) -> None:
+    """Kill any process using the specified port (except excluded pids)."""
+    if exclude_pids is None:
+        exclude_pids = set()
+    # Always exclude current process and parent
+    exclude_pids.add(os.getpid())
+    exclude_pids.add(os.getppid())
+
+    try:
+        # Use lsof to find process on port
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            for pid in pids:
+                try:
+                    pid_int = int(pid)
+                    # Don't kill excluded processes
+                    if pid_int in exclude_pids:
+                        continue
+                    os.kill(pid_int, signal.SIGKILL)
+                    print(f"Killed process {pid} on port {port}")
+                except (ProcessLookupError, ValueError):
+                    pass
+    except Exception as e:
+        print(f"Error killing process on port {port}: {e}")
+
+
 def stop_server(process: subprocess.Popen) -> None:
     """
     Stop the server process.
@@ -156,19 +239,38 @@ def stop_server(process: subprocess.Popen) -> None:
     if process is None:
         return
 
+    server_pid = process.pid
     try:
-        # Send SIGTERM
-        process.terminate()
+        # Kill the entire process group
+        try:
+            pgid = os.getpgid(server_pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
 
         # Wait for graceful shutdown
         try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            # Force kill if not responding
-            process.kill()
             process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Force kill process group
+            try:
+                pgid = os.getpgid(server_pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
     except Exception as e:
         print(f"Error stopping server: {e}")
+
+    # Wait a moment for port to be released naturally
+    time.sleep(2)
 
 
 def start_server(script_name: str) -> Optional[subprocess.Popen]:
@@ -187,7 +289,13 @@ def start_server(script_name: str) -> Optional[subprocess.Popen]:
         print(f"Script not found: {script_path}")
         return None
 
-    # Start server process
+    # Ensure port is free before starting
+    if is_port_in_use(SERVER_PORT):
+        print(f"Port {SERVER_PORT} is in use, waiting for it to be released...")
+        if not wait_for_port_free(SERVER_PORT, timeout=15):
+            print(f"Warning: Port {SERVER_PORT} still in use, trying to start anyway")
+
+    # Start server process with new process group
     process = subprocess.Popen(
         ["bash", str(script_path)],
         cwd=str(PROJECT_ROOT),
@@ -239,6 +347,7 @@ def run_benchmark(
     script_name: str,
     audio_path: Path,
     audio_duration: float,
+    iterations: int = 5,
 ) -> BenchmarkResult:
     """
     Run benchmark for a single ASR engine.
@@ -292,55 +401,92 @@ def run_benchmark(
                 error="Server startup timeout",
             )
 
-        print("Server is ready!")
+        # Verify we're talking to the right engine
+        try:
+            health = requests.get(HEALTH_ENDPOINT, timeout=5).json()
+            actual_engine = health.get("engine", "unknown")
+            print(f"Server is ready! (engine: {actual_engine})")
+        except Exception:
+            print("Server is ready!")
 
-        # Run transcription
-        print(f"Transcribing {audio_duration:.1f}s audio...")
-        start_time = time.time()
-        result = transcribe_audio(audio_path)
-        transcription_time = time.time() - start_time
+        # Run transcription multiple times
+        print(f"Transcribing {audio_duration:.1f}s audio ({iterations} iteration(s))...")
+        transcription_times = []
+        text = ""
+        result = {}
 
-        text = result.get("text", "")
-        speed_ratio = audio_duration / transcription_time if transcription_time > 0 else 0
+        for i in range(iterations):
+            start_time = time.time()
+            try:
+                result = transcribe_audio(audio_path)
+            except Exception as e:
+                print(f"Transcription request failed on iteration {i+1}: {e}")
+                raise
 
-        print(f"Transcription completed in {transcription_time:.2f}s")
-        print(f"Speed: {speed_ratio:.2f}x realtime")
-        print(f"Text length: {len(text)} chars")
-        print(f"Preview: {text[:100]}...")
+            elapsed = time.time() - start_time
+            transcription_times.append(elapsed)
+            text = result.get("text", "")
+            print(f"  Iteration {i+1}/{iterations}: {elapsed:.2f}s")
+
+        # Calculate average
+        avg_time = sum(transcription_times) / len(transcription_times)
+        min_time = min(transcription_times)
+        max_time = max(transcription_times)
+        speed_ratio = audio_duration / avg_time if avg_time > 0 else 0
+
+        print(f"Transcription completed:")
+        print(f"  Average: {avg_time:.2f}s (min: {min_time:.2f}s, max: {max_time:.2f}s)")
+        print(f"  Speed: {speed_ratio:.2f}x realtime")
+        print(f"  Text length: {len(text)} chars")
+        if text:
+            print(f"  Preview: {text[:100]}...")
+        else:
+            print("  Preview: (empty result)")
+            print(f"  Full response: {result}")
 
         return BenchmarkResult(
             engine_name=engine_name,
             script_name=script_name,
-            transcription_time=transcription_time,
+            transcription_time=avg_time,
+            transcription_times=transcription_times,
             text=text,
             text_length=len(text),
             audio_duration=audio_duration,
             speed_ratio=speed_ratio,
+            iterations=iterations,
             success=True,
         )
 
     except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
         return BenchmarkResult(
             engine_name=engine_name,
             script_name=script_name,
             transcription_time=0,
+            transcription_times=[],
             text="",
             text_length=0,
             audio_duration=audio_duration,
             speed_ratio=0,
+            iterations=0,
             success=False,
             error=f"Request error: {e}",
         )
 
     except Exception as e:
+        print(f"Benchmark error: {e}")
+        import traceback
+        traceback.print_exc()
         return BenchmarkResult(
             engine_name=engine_name,
             script_name=script_name,
             transcription_time=0,
+            transcription_times=[],
             text="",
             text_length=0,
             audio_duration=audio_duration,
             speed_ratio=0,
+            iterations=0,
             success=False,
             error=str(e),
         )
@@ -349,73 +495,134 @@ def run_benchmark(
         # Stop server
         if process is not None:
             print("Stopping server...")
-            # Kill process group
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                process.wait(timeout=10)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            stop_server(process)
 
-            # Give some time for port to be released
-            time.sleep(3)
+            # Wait for port to be released
+            if not wait_for_port_free(SERVER_PORT, timeout=10):
+                print(f"Warning: Port {SERVER_PORT} still in use, waiting more...")
+                time.sleep(3)
+                if is_port_in_use(SERVER_PORT):
+                    print(f"Port still busy, will try to start anyway...")
+            else:
+                print("Port released.")
 
 
-def print_results_table(results: list[BenchmarkResult]) -> None:
+def print_results_table(results: list[BenchmarkResult], mode: str, audio_duration: float, iterations: int) -> None:
     """
     Print benchmark results as a formatted table.
 
     Args:
         results: List of benchmark results
+        mode: Test mode name
+        audio_duration: Duration of test audio
+        iterations: Number of iterations per engine
     """
     print("\n")
-    print("=" * 80)
-    print("BENCHMARK RESULTS")
-    print("=" * 80)
+    print("=" * 90)
+    print(f"BENCHMARK RESULTS (mode: {mode}, {iterations} iteration(s), {audio_duration:.1f}s audio)")
+    print("=" * 90)
 
     # Header
-    print(f"{'Engine':<40} {'Time (s)':<12} {'Speed':<12} {'Status':<12}")
-    print("-" * 80)
+    print(f"{'Engine':<40} {'Avg (s)':<10} {'Min (s)':<10} {'Max (s)':<10} {'Speed':<10} {'Status':<10}")
+    print("-" * 90)
 
     # Results
     for r in results:
         if r.success:
             status = "✓ OK"
-            time_str = f"{r.transcription_time:.2f}"
+            avg_str = f"{r.transcription_time:.2f}"
+            min_str = f"{min(r.transcription_times):.2f}" if r.transcription_times else "N/A"
+            max_str = f"{max(r.transcription_times):.2f}" if r.transcription_times else "N/A"
             speed_str = f"{r.speed_ratio:.2f}x"
         else:
-            status = f"✗ {r.error[:20]}" if r.error else "✗ Failed"
-            time_str = "N/A"
+            status = f"✗ {r.error[:15]}" if r.error else "✗ Failed"
+            avg_str = "N/A"
+            min_str = "N/A"
+            max_str = "N/A"
             speed_str = "N/A"
 
-        print(f"{r.engine_name:<40} {time_str:<12} {speed_str:<12} {status:<12}")
+        print(f"{r.engine_name:<40} {avg_str:<10} {min_str:<10} {max_str:<10} {speed_str:<10} {status:<10}")
 
-    print("-" * 80)
+    print("-" * 90)
 
     # Summary
     successful = [r for r in results if r.success]
     if successful:
         fastest = min(successful, key=lambda r: r.transcription_time)
-        print(f"\nFastest: {fastest.engine_name} ({fastest.transcription_time:.2f}s, {fastest.speed_ratio:.2f}x realtime)")
+        print(f"\nFastest: {fastest.engine_name}")
+        print(f"  Average: {fastest.transcription_time:.2f}s")
+        print(f"  Speed: {fastest.speed_ratio:.2f}x realtime")
 
     print("\n")
 
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="OAITT ASR Engine Benchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  short   20s audio, 5 iterations - quick benchmark (default)
+  long    60s audio, 3 iterations - tests chunked transcription
+  full    full file (~137s), 1 iteration - complete longform test
+
+Examples:
+  python -m tests.test_benchmark                    # short mode
+  python -m tests.test_benchmark --mode long        # long mode
+  python -m tests.test_benchmark --mode full        # full file
+  python -m tests.test_benchmark --iterations 10    # custom iterations
+        """
+    )
+    parser.add_argument(
+        "--mode", "-m",
+        choices=list(TEST_MODES.keys()),
+        default=DEFAULT_MODE,
+        help=f"Test mode (default: {DEFAULT_MODE})"
+    )
+    parser.add_argument(
+        "--iterations", "-i",
+        type=int,
+        default=None,
+        help="Override number of iterations"
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main benchmark runner."""
+    args = parse_args()
+
+    # Get mode configuration
+    mode_config = TEST_MODES[args.mode]
+    target_duration = mode_config["duration"]
+    iterations = args.iterations if args.iterations is not None else mode_config["iterations"]
+
     print("=" * 80)
     print("OAITT ASR Engine Benchmark")
+    print(f"Mode: {args.mode} - {mode_config['description']}")
     print("=" * 80)
 
     # Find and prepare audio
     print("\nPreparing test audio...")
     sample_path = get_test_audio()
-    print(f"Using sample: {sample_path.name}")
+    file_duration = get_audio_file_duration(sample_path)
+    print(f"Using sample: {sample_path.name} (full duration: {file_duration:.1f}s)")
 
-    audio_path, audio_duration = extract_audio_segment(sample_path, TEST_AUDIO_DURATION)
-    print(f"Extracted {audio_duration:.1f}s audio segment: {audio_path}")
+    # Determine actual duration to use
+    if target_duration is None or target_duration >= file_duration:
+        # Use full file
+        audio_path = sample_path
+        audio_duration = file_duration
+        temp_file = False
+        print(f"Using full file: {audio_duration:.1f}s")
+    else:
+        # Extract segment
+        audio_path, audio_duration = extract_audio_segment(sample_path, target_duration)
+        temp_file = True
+        print(f"Extracted {audio_duration:.1f}s audio segment: {audio_path}")
+
+    print(f"Iterations per engine: {iterations}")
 
     results = []
 
@@ -430,24 +637,26 @@ def main():
                     engine_name=engine_name,
                     script_name=script_name,
                     transcription_time=0,
+                    transcription_times=[],
                     text="",
                     text_length=0,
                     audio_duration=audio_duration,
                     speed_ratio=0,
+                    iterations=0,
                     success=False,
                     error="Script not found",
                 ))
                 continue
 
-            result = run_benchmark(engine_name, script_name, audio_path, audio_duration)
+            result = run_benchmark(engine_name, script_name, audio_path, audio_duration, iterations)
             results.append(result)
 
         # Print results table
-        print_results_table(results)
+        print_results_table(results, args.mode, audio_duration, iterations)
 
     finally:
-        # Cleanup temp file
-        if audio_path.exists():
+        # Cleanup temp file only if we created one
+        if temp_file and audio_path.exists() and audio_path != sample_path:
             audio_path.unlink()
             print(f"Cleaned up temporary file: {audio_path}")
 

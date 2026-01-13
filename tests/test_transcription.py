@@ -157,8 +157,8 @@ def test_transcription_with_running_server():
     sample_path = get_test_audio()
     print(f"Using sample: {sample_path}")
 
-    # Extract 29 seconds
-    audio_path = extract_audio_segment(sample_path, duration_sec=29.0)
+    # Extract 20 seconds (must be <= 25s for GigaAM short audio mode)
+    audio_path = extract_audio_segment(sample_path, duration_sec=20.0)
     print(f"Extracted segment: {audio_path}")
 
     try:
