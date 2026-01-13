@@ -38,11 +38,12 @@ GIGAAM_MODEL = os.getenv("GIGAAM_MODEL", "ai-sage/GigaAM-v3")
 GIGAAM_REVISION = os.getenv("GIGAAM_REVISION", "e2e_rnnt")
 
 # Maximum audio duration (seconds) considered "short" for GigaAM `.transcribe()`.
-# For longer audio the service will try to use `model.transcribe_longform()` if available.
+# For longer audio the service will split the audio into chunks and transcribe each chunk
+# with repeated calls to `model.transcribe()`.
 GIGAAM_MAX_SHORT_AUDIO_SEC = float(os.getenv("GIGAAM_MAX_SHORT_AUDIO_SEC", "25.0"))
 
-# Chunk size (seconds) used when falling back from GigaAM `transcribe_longform()`
-# to repeated `transcribe()` calls on fixed-size chunks. Configure via env vars:
+# Chunk size (seconds) used when splitting long audio into fixed-size chunks for repeated
+# calls to `model.transcribe()`. Configure via env vars:
 #   - GIGAAM_CHUNK_SEC: preferred chunk size in seconds (default: 30)
 #   - GIGAAM_MIN_CHUNK_SEC: minimum chunk size in seconds to attempt before giving up (default: 5)
 GIGAAM_CHUNK_SEC = int(os.getenv("GIGAAM_CHUNK_SEC", "30"))

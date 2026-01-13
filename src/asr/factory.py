@@ -121,7 +121,7 @@ def get_engine_info(engine: str | None = None) -> dict:
             "features": [
                 "State-of-the-art Russian ASR (v2/v3)",
                 "End-to-end RNNT / CTC models",
-                "Long-form transcription support via transcribe_longform",
+                "Chunk-based handling for long audio (splits audio into chunks and transcribes each chunk)",
                 "ONNX export and SSL embeddings support",
             ],
         },

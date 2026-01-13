@@ -9,8 +9,8 @@ ASR реализация для моделей семейства GigaAM.
 Особенности реализации:
 - Загружает модель через `gigaam.load_model(model_name)`
 - Для коротких аудио (по умолчанию <= 25s) использует `.transcribe(path)`
-- Для длинных аудио пытается использовать `.transcribe_longform(path)` если доступно
-- Результат конвертируется в `TranscriptionResponse` (сегменты при longform)
+- Для длинных аудио делит аудио на куски (GIGAAM_CHUNK_SEC) и транскрибирует каждый кусок через `.transcribe(path)`
+- Результат конвертируется в `TranscriptionResponse` (сегменты при длинном аудио)
 - Неявно использует HF/TORCH кэш, настроенный через переменные окружения
 
 Copyright (c) 2026 Andrey Sobolev (haiodo@gmail.com)
@@ -30,6 +30,8 @@ from src.config import (
     GIGAAM_MODEL,
     GIGAAM_REVISION,
     GIGAAM_MAX_SHORT_AUDIO_SEC,
+    GIGAAM_CHUNK_SEC,
+    GIGAAM_MIN_CHUNK_SEC,
     MODEL_CACHE_DIR,
     MODEL_IDLE_TIMEOUT,
     SAMPLE_RATE,
@@ -147,7 +149,7 @@ class GigaAMASR(ASRModel):
         Подход:
         - Сохраняет numpy->wav во временный файл (GigaAM API ожидает путь к файлу)
         - Вызывает `.transcribe(path)` для коротких аудио
-        - Для длинных аудио (более GIGAAM_MAX_SHORT_AUDIO_SEC) пытается вызвать `.transcribe_longform(path)`
+        - Для длинных аудио (более GIGAAM_MAX_SHORT_AUDIO_SEC) делит аудио на куски (GIGAAM_CHUNK_SEC) и последовательно транскрибирует куски через `.transcribe(path)`
         - Форматирует результат в `TranscriptionResponse` или строку в зависимости от `output`
 
         Args:
@@ -172,27 +174,52 @@ class GigaAMASR(ASRModel):
 
         tmp_path = None
         try:
-            # Write to a temporary WAV file for GigaAM to consume
-            # Use delete=False because some OS won't allow reopening NamedTemporaryFile on Windows
-            fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-            os.close(fd)
-            sf.write(tmp_path, audio, SAMPLE_RATE)
-            logger.debug(f"Saved temporary audio to {tmp_path} for GigaAM inference")
-
             # Choose inference method
             with self.model_lock:
-                # Prefer longform if audio longer than configured threshold and method is available
-                if duration > GIGAAM_MAX_SHORT_AUDIO_SEC and hasattr(self.model, "transcribe_longform"):
+                # For audio longer than the "short" threshold, perform chunked transcription using model.transcribe()
+                if duration > GIGAAM_MAX_SHORT_AUDIO_SEC:
+                    if not hasattr(self.model, "transcribe"):
+                        raise RuntimeError("Loaded GigaAM model does not expose transcribe() API required for chunked transcription")
                     logger.info(
-                        f"Using GigaAM.transcribe_longform for duration={duration:.2f}s (threshold={GIGAAM_MAX_SHORT_AUDIO_SEC}s)"
+                        f"Audio duration {duration:.2f}s exceeds {GIGAAM_MAX_SHORT_AUDIO_SEC}s; performing chunked transcribe using model.transcribe()"
                     )
-                    raw_result = self.model.transcribe_longform(tmp_path)
+                    CHUNK_SEC = GIGAAM_CHUNK_SEC
+                    MIN_CHUNK_SEC = GIGAAM_MIN_CHUNK_SEC
+                    chunk_samples = int(CHUNK_SEC * SAMPLE_RATE)
+                    num_samples = len(audio)
+                    pos = 0
+                    chunks = []
+                    # Iterate over audio in chunks and transcribe each piece, splitting further if needed
+                    while pos < num_samples:
+                        end_pos = min(pos + chunk_samples, num_samples)
+                        chunk_audio = audio[pos:end_pos]
+                        start_sec = pos / SAMPLE_RATE
+                        try:
+                            subchunks = self._transcribe_chunk_with_retry(
+                                chunk_audio, start_sec, CHUNK_SEC, MIN_CHUNK_SEC
+                            )
+                        except Exception:
+                            # If we cannot transcribe even after recursive splitting, propagate
+                            raise
+                        for sc in subchunks:
+                            text = sc.get("text") or ""
+                            bounds = sc.get("boundaries")
+                            if text:
+                                chunks.append({"text": text, "boundaries": bounds})
+                        pos = end_pos
+                    raw_result = chunks
                 else:
+                    # Write to a temporary WAV file for GigaAM to consume
+                    # Use delete=False because some OS won't allow reopening NamedTemporaryFile on Windows
+                    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+                    os.close(fd)
+                    sf.write(tmp_path, audio, SAMPLE_RATE)
+                    logger.debug(f"Saved temporary audio to {tmp_path} for GigaAM inference")
                     logger.info(f"Using GigaAM.transcribe for duration={duration:.2f}s")
                     raw_result = self.model.transcribe(tmp_path)
 
         finally:
-            # Clean up temp file
+            # Clean up temp file if it was created (chunked path uses its own temp files)
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
@@ -203,6 +230,87 @@ class GigaAMASR(ASRModel):
         return self._format_result(
             raw_result, duration=duration, output=output, language=language, want_words=word_timestamps
         )
+
+    def _transcribe_chunk_with_retry(
+        self,
+        chunk_audio: np.ndarray,
+        start_sec: float,
+        max_chunk_sec: float,
+        min_chunk_sec: float,
+    ):
+        """
+        Attempt to transcribe `chunk_audio`. If `model.transcribe()` raises a ValueError
+        indicating the chunk is too long (or asks to use longform), split the chunk into halves
+        and retry recursively until pieces are small enough or the minimum chunk size is reached.
+
+        Returns a list of dicts: [{"text": "...", "boundaries": (start, end)}, ...]
+        """
+        results: list[dict] = []
+        duration = len(chunk_audio) / SAMPLE_RATE
+        if duration <= 0:
+            return results
+
+        # If chunk is within allowed size, try to transcribe directly
+        if duration <= max_chunk_sec:
+            path = None
+            try:
+                fd, path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                sf.write(path, chunk_audio, SAMPLE_RATE)
+                # Caller holds model_lock when invoking this method, so do not re-acquire it
+                raw_chunk = self.model.transcribe(path)
+
+                # Normalize raw_chunk into text
+                if isinstance(raw_chunk, str):
+                    text = raw_chunk.strip()
+                elif isinstance(raw_chunk, dict):
+                    text = (raw_chunk.get("text") or raw_chunk.get("transcription") or "").strip()
+                elif isinstance(raw_chunk, (list, tuple)):
+                    pieces = []
+                    for u in raw_chunk:
+                        if isinstance(u, dict):
+                            pieces.append(u.get("transcription") or u.get("text") or "")
+                        else:
+                            pieces.append(str(u))
+                    text = " ".join(p for p in pieces if p).strip()
+                else:
+                    text = str(raw_chunk).strip()
+
+                if text:
+                    results.append({"text": text, "boundaries": (start_sec, start_sec + duration)})
+                return results
+
+            except ValueError as ve:
+                msg = str(ve)
+                # If the model complains it's too long, split further and retry
+                if ("Too long wav file" in msg) or ("transcribe_longform" in msg) or ("Too long" in msg):
+                    if duration <= min_chunk_sec:
+                        # Give up and re-raise
+                        raise
+                    mid = len(chunk_audio) // 2
+                    first = chunk_audio[:mid]
+                    second = chunk_audio[mid:]
+                    mid_sec = start_sec + mid / SAMPLE_RATE
+                    results.extend(self._transcribe_chunk_with_retry(first, start_sec, max_chunk_sec, min_chunk_sec))
+                    results.extend(self._transcribe_chunk_with_retry(second, mid_sec, max_chunk_sec, min_chunk_sec))
+                    return results
+                # If it's a different ValueError, propagate
+                raise
+            finally:
+                try:
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+
+        # If chunk is larger than allowed max, split into halves and recurse
+        mid = len(chunk_audio) // 2
+        first = chunk_audio[:mid]
+        second = chunk_audio[mid:]
+        mid_sec = start_sec + mid / SAMPLE_RATE
+        results.extend(self._transcribe_chunk_with_retry(first, start_sec, max_chunk_sec, min_chunk_sec))
+        results.extend(self._transcribe_chunk_with_retry(second, mid_sec, max_chunk_sec, min_chunk_sec))
+        return results
 
     def _format_result(
         self,
