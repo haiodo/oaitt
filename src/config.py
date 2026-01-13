@@ -67,6 +67,10 @@ DEBUG_LOG_DIR = os.getenv("DEBUG_LOG_DIR", None)
 # Audio sample rate (Whisper requirement)
 SAMPLE_RATE = 16000
 
+# Default language for transcription (used when not specified via API)
+# Set to None or empty string to use auto-detection
+DEFAULT_LANGUAGE = os.getenv("DEFAULT_LANGUAGE", "ru")
+
 # =============================================================================
 # Server Configuration
 # =============================================================================

@@ -354,61 +354,60 @@ class TransformersASR(ASRModel):
             # For Whisper pipeline, also check if audio is too long and needs special handling
             duration = get_audio_duration(audio)
 
-            # For audio longer than the "short" threshold, use Whisper's built-in chunking via generate method
+            # Prepare generation kwargs (used for both short and long audio)
+            generate_kwargs = {"max_new_tokens": 256}
+
+            if language:
+                generate_kwargs["language"] = language
+
+            if task == "translate":
+                generate_kwargs["task"] = "translate"
+
+            # Determine if we need word-level timestamps
+            return_ts = word_timestamps and output == "json"
+
+            # For audio longer than the "short" threshold, use manual chunked transcription
+            # instead of Whisper's built-in chunking (which is unreliable on MPS)
             if duration > GIGAAM_MAX_SHORT_AUDIO_SEC:
                 logger.info(
-                    f"Audio duration {duration:.2f}s exceeds {GIGAAM_MAX_SHORT_AUDIO_SEC}s; using Whisper's built-in chunking via generate method"
+                    f"Audio duration {duration:.2f}s exceeds {GIGAAM_MAX_SHORT_AUDIO_SEC}s; "
+                    "using manual chunked transcription for Whisper pipeline"
                 )
 
-                # Use Whisper's built-in long-form transcription capabilities
-                # Prepare generation kwargs
-                generate_kwargs = {"max_new_tokens": 256}
+                # Use our own chunked transcription method
+                chunks = self._transcribe_chunked_pipeline(
+                    audio, generate_kwargs
+                )
 
-                if language:
-                    generate_kwargs["language"] = language
+                # Assemble results
+                segments = []
+                texts = []
+                for idx, chunk in enumerate(chunks):
+                    chunk_text = chunk.get("text", "").strip()
+                    start = chunk.get("start", 0.0)
+                    end = chunk.get("end", start)
+                    if chunk_text:
+                        texts.append(chunk_text)
+                        segments.append(Segment(id=idx, start=start, end=end, text=chunk_text))
 
-                if task == "translate":
-                    generate_kwargs["task"] = "translate"
-
-                # Determine if we need word-level timestamps
-                return_ts = word_timestamps and output == "json"
-
-                # Run inference using the model's generate method directly
-                # This allows Whisper to handle its own internal chunking
-                with self.model_lock:
-                    # Use the pipeline's internal method to handle long-form audio
-                    # The pipeline should handle chunking internally when return_timestamps=True
-                    result = self.pipeline(
-                        audio,
-                        generate_kwargs=generate_kwargs,
-                        return_timestamps=True,  # Enable Whisper's internal chunking
-                    )
-
+                full_text = " ".join(texts)
                 logger.info(
-                    f"Long-form transcription completed: {len(result.get('text', ''))} characters"
+                    f"Long-form chunked transcription completed: {len(full_text)} characters, "
+                    f"{len(segments)} segments"
                 )
 
-                return self._format_result(result, language, output, return_ts)
+                if output == "text":
+                    return full_text
+                return TranscriptionResponse(text=full_text.strip(), language=language, segments=segments)
             else:
                 # Otherwise use the Whisper pipeline flow for shorter audio
-                # Prepare generation kwargs
-                generate_kwargs = {"max_new_tokens": 256}
-
-                if language:
-                    generate_kwargs["language"] = language
-
-                if task == "translate":
-                    generate_kwargs["task"] = "translate"
-
-                # Determine if we need word-level timestamps
-                return_ts = word_timestamps and output == "json"
-
                 # Run inference
+                # Always use return_timestamps="word" for more reliable results on MPS
                 with self.model_lock:
                     result = self.pipeline(
                         audio,
                         generate_kwargs=generate_kwargs,
-                        return_timestamps="word" if return_ts else True,
+                        return_timestamps="word",
                     )
 
                 logger.info(
@@ -416,6 +415,81 @@ class TransformersASR(ASRModel):
                 )
 
                 return self._format_result(result, language, output, return_ts)
+
+    def _transcribe_chunked_pipeline(
+        self,
+        audio: np.ndarray,
+        generate_kwargs: dict,
+    ) -> list:
+        """
+        Транскрибирует длинное аудио по частям, используя Whisper pipeline.
+
+        Разбивает аудио на куски по GIGAAM_CHUNK_SEC секунд и транскрибирует каждый
+        отдельно. Это более надёжно, чем встроенный chunking pipeline'а,
+        особенно на MPS (Apple Silicon).
+
+        Args:
+            audio: numpy array аудио данных (16kHz, mono, float32)
+            generate_kwargs: дополнительные параметры для генерации
+
+        Returns:
+            Список словарей с транскрипцией и временными границами:
+            [{"text": "...", "start": 0.0, "end": 30.0}, ...]
+        """
+        results = []
+        chunk_samples = int(GIGAAM_CHUNK_SEC * SAMPLE_RATE)
+        num_samples = len(audio)
+        pos = 0
+
+        logger.debug(
+            f"Chunked pipeline transcription: {num_samples} samples, "
+            f"chunk size {chunk_samples} ({GIGAAM_CHUNK_SEC}s)"
+        )
+
+        while pos < num_samples:
+            end_pos = min(pos + chunk_samples, num_samples)
+            chunk_audio = audio[pos:end_pos]
+            start_sec = pos / SAMPLE_RATE
+            chunk_duration = len(chunk_audio) / SAMPLE_RATE
+
+            logger.debug(
+                f"Processing chunk at {start_sec:.2f}s - {start_sec + chunk_duration:.2f}s"
+            )
+
+            try:
+                with self.model_lock:
+                    chunk_result = self.pipeline(
+                        chunk_audio,
+                        generate_kwargs=generate_kwargs,
+                        return_timestamps="word",
+                    )
+
+                # Extract text from result
+                if isinstance(chunk_result, dict):
+                    chunk_text = chunk_result.get("text", "").strip()
+                elif isinstance(chunk_result, str):
+                    chunk_text = chunk_result.strip()
+                else:
+                    chunk_text = str(chunk_result).strip()
+
+                if chunk_text:
+                    results.append({
+                        "text": chunk_text,
+                        "start": start_sec,
+                        "end": start_sec + chunk_duration,
+                    })
+                    logger.debug(f"Chunk transcribed: '{chunk_text[:50]}...' " if len(chunk_text) > 50 else f"Chunk transcribed: '{chunk_text}'")
+                else:
+                    logger.warning(f"Empty result for chunk at {start_sec:.2f}s")
+
+            except Exception as e:
+                logger.error(f"Failed to transcribe chunk at {start_sec:.2f}s: {e}")
+                # Continue with next chunk instead of failing completely
+                continue
+
+            pos = end_pos
+
+        return results
 
     def _transcribe_chunk_with_retry(self, chunk_audio: np.ndarray, start_sec: float, max_chunk_sec: float, min_chunk_sec: float):
         """

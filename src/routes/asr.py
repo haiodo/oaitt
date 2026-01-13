@@ -20,6 +20,7 @@ from src.auth import verify_token
 from src.config import (
     ASR_ENGINE,
     CONFIDENCE_FILTER_ENABLED,
+    DEFAULT_LANGUAGE,
     SAMPLE_RATE,
     MAX_CHARS_PER_SECOND,
     CHARS_PER_SECOND_MULTIPLIER,
@@ -113,6 +114,9 @@ async def transcribe(
             f"duration: {audio_duration_sec:.2f}s"
         )
 
+        # Use default language if not specified
+        effective_language = language if language else DEFAULT_LANGUAGE
+
         # Run transcription with adaptive timeout
         try:
             result, elapsed_time = transcribe_with_timeout(
@@ -120,7 +124,7 @@ async def transcribe(
                 audio=audio_data,
                 audio_duration_sec=audio_duration_sec,
                 task=task,
-                language=language,
+                language=effective_language,
                 word_timestamps=word_timestamps,
                 output=output,
             )

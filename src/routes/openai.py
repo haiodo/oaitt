@@ -21,6 +21,7 @@ from src.auth import verify_token
 from src.config import (
     SAMPLE_RATE,
     ASR_ENGINE,
+    DEFAULT_LANGUAGE,
     CONFIDENCE_FILTER_ENABLED,
     MAX_CHARS_PER_SECOND,
     CHARS_PER_SECOND_MULTIPLIER,
@@ -142,6 +143,9 @@ async def openai_transcribe(
         # Use internal output format based on what we need
         internal_output = "json" if want_words or response_format == "verbose_json" else "text"
 
+        # Use default language if not specified
+        effective_language = language if language else DEFAULT_LANGUAGE
+
         # Run transcription with adaptive timeout
         try:
             result, elapsed_time = transcribe_with_timeout(
@@ -149,7 +153,7 @@ async def openai_transcribe(
                 audio=audio_data,
                 audio_duration_sec=audio_duration_sec,
                 task="transcribe",
-                language=language,
+                language=effective_language,
                 word_timestamps=want_words,
                 output=internal_output,
             )
