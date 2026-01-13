@@ -103,6 +103,16 @@ class TransformersASR(ASRModel):
            моделей, несовместимых с Whisper (например, GigaAM на HF).
         """
         device = get_device()
+
+        # Whisper pipeline has generation issues on MPS (produces empty/garbage output)
+        # Force CPU for openai/whisper models on MPS devices
+        if is_mps_device(device) and "whisper" in WHISPER_MODEL.lower():
+            logger.warning(
+                "MPS detected but Whisper pipeline has generation issues on MPS. "
+                "Falling back to CPU for reliable results."
+            )
+            device = torch.device("cpu")
+
         self.torch_dtype = self._get_torch_dtype(device)
 
         logger.info(
@@ -242,7 +252,7 @@ class TransformersASR(ASRModel):
 
         Поддерживает два режима:
         - стандартный pipeline (для Whisper и совместимых моделей)
-        - generic model (AutoModel / custom) — вызывается `model.transcribe(path)` / `model.transcribe_longform(path)`
+        - generic model (AutoModel / custom) — вызывается `model.transcribe(path)` с ручным разделением на чанки для длинных аудио
         """
         self.update_activity()
 
@@ -253,60 +263,46 @@ class TransformersASR(ASRModel):
         if self.is_generic_model:
             duration = get_audio_duration(audio)
             tmp_path = None
-            # If we need to fall back from longform -> chunked transcribe, record a warning
-            fallback_warning = None
             try:
                 fd, tmp_path = tempfile.mkstemp(suffix=".wav")
                 os.close(fd)
                 sf.write(tmp_path, audio, SAMPLE_RATE)
 
                 with self.model_lock:
-                    # Prefer longform when audio exceeds configured threshold and method exists
-                    if duration > GIGAAM_MAX_SHORT_AUDIO_SEC and hasattr(self.model, "transcribe_longform"):
-                        logger.info(f"Using model.transcribe_longform() for duration={duration:.2f}s")
-                        try:
-                            raw = self.model.transcribe_longform(tmp_path)
-                        except Exception as long_exc:
-                            # If longform fails (for example, VAD/pyannote couldn't load),
-                            # attempt a safe chunked fallback using the model.transcribe() API.
-                            logger.exception("model.transcribe_longform() failed; attempting chunked fallback using model.transcribe()")
-                            # Record a warning so it can be surfaced in the final output
+                    # For audio longer than the "short" threshold, perform chunked transcription using model.transcribe()
+                    if duration > GIGAAM_MAX_SHORT_AUDIO_SEC:
+                        if not hasattr(self.model, "transcribe"):
+                            raise RuntimeError("Loaded generic model does not expose transcribe() API required for chunked transcription")
+                        logger.info(
+                            f"Audio duration {duration:.2f}s exceeds {GIGAAM_MAX_SHORT_AUDIO_SEC}s; performing chunked transcribe using model.transcribe()"
+                        )
+                        CHUNK_SEC = GIGAAM_CHUNK_SEC
+                        MIN_CHUNK_SEC = GIGAAM_MIN_CHUNK_SEC
+                        chunk_samples = int(CHUNK_SEC * SAMPLE_RATE)
+                        num_samples = len(audio)
+                        pos = 0
+                        chunks = []
+                        # Iterate over audio in chunks and transcribe each piece, recursively splitting if needed
+                        while pos < num_samples:
+                            end_pos = min(pos + chunk_samples, num_samples)
+                            chunk_audio = audio[pos:end_pos]
+                            start_sec = pos / SAMPLE_RATE
                             try:
-                                fallback_warning = f"transcribe_longform failed; falling back to chunked transcribe: {long_exc}"
+                                subchunks = self._transcribe_chunk_with_retry(
+                                    chunk_audio, start_sec, CHUNK_SEC, MIN_CHUNK_SEC
+                                )
                             except Exception:
-                                fallback_warning = "transcribe_longform failed; falling back to chunked transcribe (exception message unavailable)"
-                            if hasattr(self.model, "transcribe"):
-                                # Chunk size (seconds) - configured via GIGAAM_CHUNK_SEC / GIGAAM_MIN_CHUNK_SEC
-                                CHUNK_SEC = GIGAAM_CHUNK_SEC
-                                MIN_CHUNK_SEC = GIGAAM_MIN_CHUNK_SEC
-                                chunk_samples = int(CHUNK_SEC * SAMPLE_RATE)
-                                num_samples = len(audio)
-                                pos = 0
-                                chunks = []
-                                # Iterate over audio in chunks and transcribe each piece, recursively splitting if needed
-                                while pos < num_samples:
-                                    end_pos = min(pos + chunk_samples, num_samples)
-                                    chunk_audio = audio[pos:end_pos]
-                                    start_sec = pos / SAMPLE_RATE
-                                    try:
-                                        subchunks = self._transcribe_chunk_with_retry(
-                                            chunk_audio, start_sec, CHUNK_SEC, MIN_CHUNK_SEC
-                                        )
-                                    except Exception:
-                                        # If even recursive splitting couldn't transcribe, propagate the error
-                                        raise
-                                    for sc in subchunks:
-                                        text = sc.get("text") or ""
-                                        bounds = sc.get("boundaries")
-                                        if text:
-                                            chunks.append({"text": text, "boundaries": bounds})
-                                    pos = end_pos
-                                # Provide the assembled chunks as the raw result (list of dicts),
-                                # which will be handled by the existing list-processing path below.
-                                raw = chunks
-                            else:
-                                # No available fallback; re-raise the original longform exception
-                                raise long_exc
+                                # If we cannot transcribe even after recursive splitting, propagate
+                                raise
+                            for sc in subchunks:
+                                text = sc.get("text") or ""
+                                bounds = sc.get("boundaries")
+                                if text:
+                                    chunks.append({"text": text, "boundaries": bounds})
+                            pos = end_pos
+                        # Provide the assembled chunks as the raw result (list of dicts),
+                        # which will be handled by the existing list-processing path below.
+                        raw = chunks
                     elif hasattr(self.model, "transcribe"):
                         logger.info(f"Using model.transcribe() for duration={duration:.2f}s")
                         raw = self.model.transcribe(tmp_path)
@@ -318,20 +314,12 @@ class TransformersASR(ASRModel):
                     if output == "text":
                         return raw
                     resp_obj = TranscriptionResponse(text=raw.strip(), language=language)
-                    if fallback_warning:
-                        d = resp_obj.model_dump(exclude_none=True)
-                        d.setdefault("_warnings", []).append(fallback_warning)
-                        return d
                     return resp_obj
 
                 if isinstance(raw, dict) and "text" in raw:
                     if output == "text":
                         return raw.get("text", "")
                     resp_obj = TranscriptionResponse(text=raw.get("text", "").strip(), language=language)
-                    if fallback_warning:
-                        d = resp_obj.model_dump(exclude_none=True)
-                        d.setdefault("_warnings", []).append(fallback_warning)
-                        return d
                     return resp_obj
 
                 if isinstance(raw, (list, tuple)):
@@ -356,10 +344,6 @@ class TransformersASR(ASRModel):
                     if output == "text":
                         return full_text
                     resp = TranscriptionResponse(text=full_text.strip(), language=language, segments=segments)
-                    if fallback_warning:
-                        d = resp.model_dump(exclude_none=True)
-                        d.setdefault("_warnings", []).append(fallback_warning)
-                        return d
                     return resp
 
                 # Fallback: stringify unknown formats
@@ -367,10 +351,6 @@ class TransformersASR(ASRModel):
                 if output == "text":
                     return text
                 resp_obj = TranscriptionResponse(text=text, language=language)
-                if fallback_warning:
-                    d = resp_obj.model_dump(exclude_none=True)
-                    d.setdefault("_warnings", []).append(fallback_warning)
-                    return d
                 return resp_obj
 
             finally:
@@ -379,6 +359,72 @@ class TransformersASR(ASRModel):
                         os.remove(tmp_path)
                     except Exception:
                         pass
+        else:
+            # For Whisper pipeline, also check if audio is too long and needs special handling
+            duration = get_audio_duration(audio)
+
+            # For audio longer than the "short" threshold, use Whisper's built-in chunking via generate method
+            if duration > GIGAAM_MAX_SHORT_AUDIO_SEC:
+                logger.info(
+                    f"Audio duration {duration:.2f}s exceeds {GIGAAM_MAX_SHORT_AUDIO_SEC}s; using Whisper's built-in chunking via generate method"
+                )
+
+                # Use Whisper's built-in long-form transcription capabilities
+                # Prepare generation kwargs
+                generate_kwargs = {"max_new_tokens": 256}
+
+                if language:
+                    generate_kwargs["language"] = language
+
+                if task == "translate":
+                    generate_kwargs["task"] = "translate"
+
+                # Determine if we need word-level timestamps
+                return_ts = word_timestamps and output == "json"
+
+                # Run inference using the model's generate method directly
+                # This allows Whisper to handle its own internal chunking
+                with self.model_lock:
+                    # Use the pipeline's internal method to handle long-form audio
+                    # The pipeline should handle chunking internally when return_timestamps=True
+                    result = self.pipeline(
+                        audio,
+                        generate_kwargs=generate_kwargs,
+                        return_timestamps=True,  # Enable Whisper's internal chunking
+                    )
+
+                logger.info(
+                    f"Long-form transcription completed: {len(result.get('text', ''))} characters"
+                )
+
+                return self._format_result(result, language, output, return_ts)
+            else:
+                # Otherwise use the Whisper pipeline flow for shorter audio
+                # Prepare generation kwargs
+                generate_kwargs = {"max_new_tokens": 256}
+
+                if language:
+                    generate_kwargs["language"] = language
+
+                if task == "translate":
+                    generate_kwargs["task"] = "translate"
+
+                # Determine if we need word-level timestamps
+                return_ts = word_timestamps and output == "json"
+
+                # Run inference
+                with self.model_lock:
+                    result = self.pipeline(
+                        audio,
+                        generate_kwargs=generate_kwargs,
+                        return_timestamps="word" if return_ts else True,
+                    )
+
+                logger.info(
+                    f"Transcription completed: {len(result.get('text', ''))} characters"
+                )
+
+                return self._format_result(result, language, output, return_ts)
 
     def _transcribe_chunk_with_retry(self, chunk_audio: np.ndarray, start_sec: float, max_chunk_sec: float, min_chunk_sec: float):
         """
@@ -426,7 +472,7 @@ class TransformersASR(ASRModel):
             except ValueError as ve:
                 msg = str(ve)
                 # If the model complains it's too long, split further and retry
-                if ("Too long wav file" in msg) or ("transcribe_longform" in msg) or ("Too long" in msg):
+                if ("Too long wav file" in msg) or ("Too long" in msg):
                     if duration <= min_chunk_sec:
                         # Give up and re-raise to be handled by caller
                         raise
@@ -455,32 +501,6 @@ class TransformersASR(ASRModel):
         results.extend(self._transcribe_chunk_with_retry(first, start_sec, max_chunk_sec, min_chunk_sec))
         results.extend(self._transcribe_chunk_with_retry(second, mid_sec, max_chunk_sec, min_chunk_sec))
         return results
-
-        # Otherwise use the Whisper pipeline flow
-        # Prepare generation kwargs
-        generate_kwargs = {"max_new_tokens": 256}
-
-        if language:
-            generate_kwargs["language"] = language
-
-        if task == "translate":
-            generate_kwargs["task"] = "translate"
-
-        # Determine if we need word-level timestamps
-        return_ts = word_timestamps and output == "json"
-
-        # Run inference
-        result = self.pipeline(
-            audio,
-            generate_kwargs=generate_kwargs,
-            return_timestamps="word" if return_ts else True,
-        )
-
-        logger.info(
-            f"Transcription completed: {len(result.get('text', ''))} characters"
-        )
-
-        return self._format_result(result, language, output, return_ts)
 
     def _format_result(
         self,

@@ -15,6 +15,11 @@ from typing import Optional, Union
 
 import numpy as np
 
+# Apply PyTorch 2.6+ compatibility patch BEFORE importing whisperx
+# This fixes the weights_only=True issue with pyannote.audio VAD models
+from src.utils.torch_compat import patch_torch_load_weights_only
+patch_torch_load_weights_only()
+
 from src.asr.base import ASRModel
 from src.config import (
     COMPUTE_TYPE,

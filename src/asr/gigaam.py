@@ -149,7 +149,7 @@ class GigaAMASR(ASRModel):
         Подход:
         - Сохраняет numpy->wav во временный файл (GigaAM API ожидает путь к файлу)
         - Вызывает `.transcribe(path)` для коротких аудио
-        - Для длинных аудио (более GIGAAM_MAX_SHORT_AUDIO_SEC) делит аудио на куски (GIGAAM_CHUNK_SEC) и последовательно транскрибирует куски через `.transcribe(path)`
+        - Для длинных аудио (более GIGAAM_MAX_SHORT_AUDIO_SEC) делит аудио на куски (GIGAAM_CHUNK_SEC) и последовательно транскрибирует куски через `.transcribe(path)` с ручным разделением на чанки
         - Форматирует результат в `TranscriptionResponse` или строку в зависимости от `output`
 
         Args:
@@ -283,7 +283,7 @@ class GigaAMASR(ASRModel):
             except ValueError as ve:
                 msg = str(ve)
                 # If the model complains it's too long, split further and retry
-                if ("Too long wav file" in msg) or ("transcribe_longform" in msg) or ("Too long" in msg):
+                if ("Too long wav file" in msg) or ("Too long" in msg):
                     if duration <= min_chunk_sec:
                         # Give up and re-raise
                         raise
