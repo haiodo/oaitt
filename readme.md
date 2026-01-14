@@ -1,6 +1,6 @@
 # 🎙️ OAITT — Open AI Transformer Transcriber
 
-**Высокопроизводительный сервис распознавания речи на базе OpenAI Whisper**
+**Высокопроизводительный сервис распознавания речи с поддержкой Whisper и GigaAM**
 
 OAITT — это speech-to-text сервис транскрипции с поддержкой нескольких ASR движков, OpenAI-совместимым API и расширенными метриками качества.
 
@@ -8,13 +8,40 @@ OAITT — это speech-to-text сервис транскрипции с под�
 
 ## ✨ Возможности
 
-- 🚀 **Три ASR движка**: Hugging Face Transformers, WhisperX и GigaAM
+- 🚀 **Четыре ASR движка**: Hugging Face Transformers, WhisperX, GigaAM (via HF) и GigaAM Native
 - 🔌 **OpenAI-совместимый API**: Drop-in замена для OpenAI Whisper API
 - ⏱️ **Точные временные метки**: На уровне слов (с WhisperX)
 - 📊 **Метрики уверенности**: Оценка качества транскрипции
 - ⏰ **Адаптивные таймауты**: Защита от зависания модели
 - 🍎 **Apple Silicon**: Поддержка MPS для Mac
 - 📝 **Множество форматов**: JSON, текст, SRT, VTT, TSV
+- ⚡ **Высокая производительность**: До 150x realtime с GigaAM Native на Apple Silicon
+
+---
+
+## 📈 Производительность
+
+### Тестовая конфигурация
+
+| Параметр | Значение |
+|----------|----------|
+| **Модель** | MacBook Pro (Mac16,5) |
+| **Чип** | Apple M4 Max |
+| **Ядра** | 16 (12 производительных + 4 энергоэффективных) |
+| **Память** | 48 GB |
+
+### Результаты бенчмарка
+
+Тестовое аудио: **137.4 секунд**, режим: full, 5 итераций:
+
+| Движок | Avg (s) | Min (s) | Max (s) | Скорость | Статус |
+|--------|---------|---------|---------|----------|--------|
+| **GigaAM (Native)** | **0.52** | 0.44 | 0.65 | **262.37x** | ✓ OK |
+| GigaAM (Transformers) | 1.15 | 1.09 | 1.39 | 119.08x | ✓ OK |
+| Whisper Large V3 (Transformers) | 13.78 | 13.47 | 14.88 | 9.97x | ✓ OK |
+| WhisperX Large V3 | 35.75 | 34.73 | 39.15 | 3.84x | ✓ OK |
+
+> 💡 **GigaAM Native — самый быстрый вариант** для русского языка (262x realtime), использует прямую передачу тензоров без временных файлов.
 
 ---
 
@@ -81,29 +108,51 @@ source ./venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### GigaAM (опционально)
+### GigaAM
 
-Поддержка GigaAM добавлена. Рекомендуемый и наиболее удобный способ — загружать модель через механизм Transformers (Hugging Face), используя модель с хаба:
+GigaAM — это высококачественная модель распознавания русской речи от команды SberDevices. OAITT поддерживает два способа интеграции:
 
-```bash
-# Загрузка GigaAM через transformers (рекомендованный вариант)
-ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_rnnt python main.py
-```
+#### Способ 1: GigaAM Native (рекомендуется для максимальной скорости)
 
-Этот подход использует `transformers.AutoModel.from_pretrained(..., trust_remote_code=True)` и позволяет загружать GigaAM прямо из Hugging Face без обязательной установки отдельного пакета `gigaam`. Обратите внимание, что для некоторых вариантов модели могут потребоваться дополнительные зависимости (hydra, omegaconf, torchaudio и т.д.); при их отсутствии загрузка может завершиться с ошибкой.
-
-Если вы предпочитаете использовать официальную обёртку и API пакета `gigaam`, можно по-прежнему установить пакет вручную:
+Использует оригинальный пакет `gigaam` напрямую. Это самый быстрый вариант (~150x realtime).
 
 ```bash
-git clone https://github.com/salute-developers/GigaAM.git
-cd GigaAM
-pip install -e .
-ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_rnnt python main.py
+# Инициализация submodule
+git submodule update --init --recursive
+
+# Запуск с GigaAM Native
+./run_gigaam_asr.sh
+
+# Или вручную:
+export PYTHONPATH="./vendor/gigaam:$PYTHONPATH"
+ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_ctc python main.py
 ```
 
-Полезные ссылки:
-- Colab-пример: https://github.com/salute-developers/GigaAM/blob/main/colab_example.ipynb  
-- Hugging Face: https://huggingface.co/ai-sage/GigaAM-v3
+Доступные модели для native режима:
+- `v3_e2e_rnnt` — лучшее качество с пунктуацией
+- `v3_e2e_ctc` — end-to-end с пунктуацией (по умолчанию)
+- `v3_rnnt`, `v3_ctc` — без пунктуации
+- `v2_rnnt`, `v2_ctc` — предыдущая версия
+
+#### Способ 2: GigaAM через Transformers (удобнее для установки)
+
+Загружает модель через Hugging Face, не требует submodule:
+
+```bash
+# Запуск GigaAM через transformers
+./run_gigaam.sh
+
+# Или вручную:
+ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_ctc python main.py
+```
+
+> ⚠️ Для этого способа могут потребоваться дополнительные зависимости: `hydra-core`, `omegaconf`, `torchaudio`.
+
+#### Полезные ссылки
+
+- 📦 GitHub: https://github.com/salute-developers/GigaAM
+- 🤗 Hugging Face: https://huggingface.co/ai-sage/GigaAM-v3
+- 📓 Colab: https://github.com/salute-developers/GigaAM/blob/main/colab_example.ipynb
 
 ---
 
@@ -118,8 +167,11 @@ ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_rnnt python main.py
 | `ASR_ENGINE` | `transformers` | ASR движок: `transformers`, `whisperx` или `gigaam` |
 | `WHISPER_MODEL` | `openai/whisper-large-v3` | Модель для Transformers |
 | `WHISPERX_MODEL` | `large-v3` | Модель для WhisperX |
-| `GIGAAM_MODEL` | `v3_e2e_rnnt` | Модель для GigaAM (например, `v3_e2e_rnnt`) |
-| `GIGAAM_MAX_SHORT_AUDIO_SEC` | `25.0` | Порог (сек) для использования краткой транскрипции GigaAM |
+| `GIGAAM_MODEL` | `v3_e2e_ctc` | Модель для GigaAM Native |
+| `GIGAAM_REVISION` | `e2e_rnnt` | Ревизия для GigaAM через Transformers |
+| `GIGAAM_MAX_SHORT_AUDIO_SEC` | `25.0` | Порог (сек) для chunked транскрипции |
+| `GIGAAM_CHUNK_SEC` | `30` | Размер чанка для длинных аудио (сек) |
+| `DEFAULT_LANGUAGE` | `ru` | Язык по умолчанию (если не указан в API) |
 | `DEVICE` | `auto` | Устройство: `auto`, `cuda`, `cpu`, `mps` |
 | `COMPUTE_TYPE` | `float32` | Тип вычислений для WhisperX |
 
@@ -172,17 +224,41 @@ ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_rnnt python main.py
 ### Базовый запуск
 
 ```bash
-# Запуск OAITT с Transformers (по умолчанию)
-python main.py
+# Запуск с Whisper Large V3 (Transformers)
+./run_whisper_large_v3.sh
+
+# Запуск с GigaAM Native (самый быстрый для русского)
+./run_gigaam_asr.sh
+
+# Запуск с GigaAM через Transformers
+./run_gigaam.sh
 
 # Запуск с WhisperX
-ASR_ENGINE=whisperx python main.py
+./run_whisperx_large_v3.sh
+
+# Или напрямую:
+python main.py                           # По умолчанию Whisper
+ASR_ENGINE=whisperx python main.py       # WhisperX
+ASR_ENGINE=gigaam python main.py         # GigaAM Native
 
 # На Apple Silicon
 DEVICE=mps python main.py
 
 # С отладочным логированием
 DEBUG_LOG_DIR=./debug_logs python main.py
+```
+
+### Batch-обработка
+
+```bash
+# Batch-транскрипция с GigaAM Native
+./run_gigaam_asr_batch.sh
+
+# Batch-транскрипция с GigaAM через Transformers
+./run_gigaam_batch.sh
+
+# С указанием директорий:
+SAMPLES_DIR=my_audio OUTPUT_DIR=results ./run_gigaam_asr_batch.sh
 ```
 
 ### Использование как модуля
@@ -386,6 +462,33 @@ pip-compile --upgrade requirements.in -o requirements.txt
 MIT License
 
 Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)
+
+---
+
+## 🙏 Благодарности
+
+### GigaAM Team
+
+Особая благодарность команде **SberDevices / Salute** за создание и открытый доступ к модели **GigaAM** — высококачественной модели распознавания русской речи:
+
+- 🏢 **Организация**: [SberDevices](https://sberdevices.ru/)
+- 📦 **Репозиторий**: [github.com/salute-developers/GigaAM](https://github.com/salute-developers/GigaAM)
+- 🤗 **Hugging Face**: [huggingface.co/ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3)
+- 📄 **Лицензия**: MIT
+
+GigaAM обеспечивает:
+- Высокое качество распознавания русской речи
+- Поддержку пунктуации (модели e2e)
+- Высокую скорость работы (~150x realtime)
+- Поддержку длинных аудио через VAD-сегментацию
+
+### OpenAI Whisper
+
+Благодарность команде **OpenAI** за модели Whisper, которые послужили основой для OpenAI-совместимого API.
+
+### Hugging Face
+
+Благодарность **Hugging Face** за библиотеку Transformers и инфраструктуру для распространения моделей.
 
 ---
 
