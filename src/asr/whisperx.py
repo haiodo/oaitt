@@ -139,6 +139,15 @@ class WhisperXASR(ASRModel):
         if MODEL_IDLE_TIMEOUT > 0:
             self.start_idle_monitor()
 
+    def is_loaded(self) -> bool:
+        """
+        Проверяет, загружена ли модель WhisperX.
+
+        Returns:
+            True если модель whisperx загружена, иначе False.
+        """
+        return self.model is not None and self.model.get("whisperx") is not None
+
     def transcribe(
         self,
         audio: np.ndarray,

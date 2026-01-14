@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional, Union
 import numpy as np
 
 from src.config import MODEL_IDLE_TIMEOUT
-from src.utils.device import clear_memory_cache
+from src.utils.device import clear_memory_cache, get_memory_info, get_process_memory_mb
 
 if TYPE_CHECKING:
     from src.models.schemas import TranscriptionResponse
@@ -63,6 +63,8 @@ class ASRModel(ABC):
         self.model_lock = Lock()
         self.last_activity_time = time.time()
         self._idle_monitor_started = False
+        self._baseline_memory_mb: float = -1.0  # Memory before model load
+        self._model_memory_mb: float = -1.0  # Memory used by model
 
     @abstractmethod
     def load_model(self) -> None:
@@ -120,9 +122,16 @@ class ASRModel(ABC):
         Потокобезопасно проверяет наличие модели и загружает её при необходимости.
         """
         with self.model_lock:
-            if self.model is None:
+            if not self.is_loaded():
                 logger.info("Model not loaded, loading now...")
+                # Record baseline memory before loading
+                self._baseline_memory_mb = get_process_memory_mb()
                 self.load_model()
+                # Calculate memory used by model
+                current_memory = get_process_memory_mb()
+                if self._baseline_memory_mb > 0 and current_memory > 0:
+                    self._model_memory_mb = current_memory - self._baseline_memory_mb
+                    logger.info(f"Model loaded, using {self._model_memory_mb:.1f} MB memory")
 
     def update_activity(self) -> None:
         """Обновляет время последней активности."""
@@ -213,12 +222,21 @@ class ASRModel(ABC):
             - class: Имя класса модели
             - idle_timeout: Таймаут простоя
             - last_activity: Время последней активности (ISO format)
+            - memory: Информация об использовании памяти
         """
         from datetime import datetime
 
-        return {
+        info = {
             "loaded": self.is_loaded(),
             "class": self.__class__.__name__,
             "idle_timeout": MODEL_IDLE_TIMEOUT,
             "last_activity": datetime.fromtimestamp(self.last_activity_time).isoformat(),
         }
+
+        # Add memory information
+        memory_info = get_memory_info()
+        if self._model_memory_mb > 0:
+            memory_info["model_memory_mb"] = round(self._model_memory_mb, 1)
+        info["memory"] = memory_info
+
+        return info

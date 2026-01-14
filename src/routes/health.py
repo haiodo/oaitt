@@ -16,6 +16,7 @@ from fastapi import APIRouter
 
 from src.config import ASR_ENGINE, TIMEOUT_ENABLED
 from src.services.performance import performance_tracker
+from src.utils.device import get_memory_info
 
 if TYPE_CHECKING:
     from src.asr.base import ASRModel
@@ -70,6 +71,13 @@ async def health_check() -> dict:
         }
     """
     perf_stats = performance_tracker.get_stats()
+    memory_info = get_memory_info()
+
+    # Add model-specific memory if available
+    if _asr_model is not None:
+        model_info = _asr_model.get_info()
+        if "memory" in model_info and "model_memory_mb" in model_info["memory"]:
+            memory_info["model_memory_mb"] = model_info["memory"]["model_memory_mb"]
 
     return {
         "status": "healthy",
@@ -77,6 +85,7 @@ async def health_check() -> dict:
         "engine": ASR_ENGINE,
         "timeout_enabled": TIMEOUT_ENABLED,
         "performance": perf_stats,
+        "memory": memory_info,
     }
 
 

@@ -93,6 +93,14 @@ BENCHMARK_SCRIPTS = [
 
 
 @dataclass
+class MemoryInfo:
+    """Memory usage information."""
+    process_memory_mb: float = 0.0  # Total process memory (RSS)
+    model_memory_mb: float = 0.0    # Memory used by model
+    gpu_memory_mb: float = 0.0      # GPU memory (if available)
+
+
+@dataclass
 class BenchmarkResult:
     """Result of a single benchmark run."""
     engine_name: str
@@ -106,6 +114,7 @@ class BenchmarkResult:
     iterations: int = 0
     success: bool = False
     error: Optional[str] = None
+    memory: Optional[MemoryInfo] = None
 
 
 def get_test_audio() -> Path:
@@ -154,6 +163,28 @@ def extract_audio_segment(input_path: Path, duration_sec: float = 29.0) -> Path:
     sf.write(temp_file.name, audio_segment, sample_rate)
 
     return Path(temp_file.name), actual_duration
+
+
+def get_server_memory_info() -> Optional[MemoryInfo]:
+    """
+    Get memory information from server health endpoint.
+
+    Returns:
+        MemoryInfo or None if unavailable
+    """
+    try:
+        response = requests.get(HEALTH_ENDPOINT, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            memory_data = data.get("memory", {})
+            return MemoryInfo(
+                process_memory_mb=memory_data.get("process_memory_mb", 0.0),
+                model_memory_mb=memory_data.get("model_memory_mb", 0.0),
+                gpu_memory_mb=memory_data.get("gpu_memory_mb", 0.0),
+            )
+    except Exception as e:
+        print(f"Failed to get memory info: {e}")
+    return None
 
 
 def wait_for_server(timeout: float = SERVER_STARTUP_TIMEOUT, check_interval: float = 2.0) -> bool:
@@ -402,6 +433,7 @@ def run_benchmark(
             )
 
         # Verify we're talking to the right engine
+        memory_info = None
         try:
             health = requests.get(HEALTH_ENDPOINT, timeout=5).json()
             actual_engine = health.get("engine", "unknown")
@@ -427,6 +459,16 @@ def run_benchmark(
             transcription_times.append(elapsed)
             text = result.get("text", "")
             print(f"  Iteration {i+1}/{iterations}: {elapsed:.2f}s")
+
+        # Get memory info after transcription (model is loaded)
+        memory_info = get_server_memory_info()
+        if memory_info:
+            print(f"Memory usage:")
+            print(f"  Process: {memory_info.process_memory_mb:.1f} MB")
+            if memory_info.model_memory_mb > 0:
+                print(f"  Model: {memory_info.model_memory_mb:.1f} MB")
+            if memory_info.gpu_memory_mb > 0:
+                print(f"  GPU: {memory_info.gpu_memory_mb:.1f} MB")
 
         # Calculate average
         avg_time = sum(transcription_times) / len(transcription_times)
@@ -455,6 +497,7 @@ def run_benchmark(
             speed_ratio=speed_ratio,
             iterations=iterations,
             success=True,
+            memory=memory_info,
         )
 
     except requests.exceptions.RequestException as e:
@@ -518,13 +561,13 @@ def print_results_table(results: list[BenchmarkResult], mode: str, audio_duratio
         iterations: Number of iterations per engine
     """
     print("\n")
-    print("=" * 90)
+    print("=" * 120)
     print(f"BENCHMARK RESULTS (mode: {mode}, {iterations} iteration(s), {audio_duration:.1f}s audio)")
-    print("=" * 90)
+    print("=" * 120)
 
     # Header
-    print(f"{'Engine':<40} {'Avg (s)':<10} {'Min (s)':<10} {'Max (s)':<10} {'Speed':<10} {'Status':<10}")
-    print("-" * 90)
+    print(f"{'Engine':<40} {'Avg (s)':<10} {'Min (s)':<10} {'Max (s)':<10} {'Speed':<10} {'RAM':<12} {'GPU':<12} {'Status':<10}")
+    print("-" * 120)
 
     # Results
     for r in results:
@@ -534,16 +577,30 @@ def print_results_table(results: list[BenchmarkResult], mode: str, audio_duratio
             min_str = f"{min(r.transcription_times):.2f}" if r.transcription_times else "N/A"
             max_str = f"{max(r.transcription_times):.2f}" if r.transcription_times else "N/A"
             speed_str = f"{r.speed_ratio:.2f}x"
+            # Memory info
+            if r.memory and r.memory.model_memory_mb > 0:
+                mem_str = f"{r.memory.model_memory_mb:.0f} MB"
+            elif r.memory and r.memory.process_memory_mb > 0:
+                mem_str = f"~{r.memory.process_memory_mb:.0f} MB"
+            else:
+                mem_str = "N/A"
+            # GPU memory
+            if r.memory and r.memory.gpu_memory_mb > 0:
+                gpu_str = f"{r.memory.gpu_memory_mb:.0f} MB"
+            else:
+                gpu_str = "N/A"
         else:
             status = f"✗ {r.error[:15]}" if r.error else "✗ Failed"
             avg_str = "N/A"
             min_str = "N/A"
             max_str = "N/A"
             speed_str = "N/A"
+            mem_str = "N/A"
+            gpu_str = "N/A"
 
-        print(f"{r.engine_name:<40} {avg_str:<10} {min_str:<10} {max_str:<10} {speed_str:<10} {status:<10}")
+        print(f"{r.engine_name:<40} {avg_str:<10} {min_str:<10} {max_str:<10} {speed_str:<10} {mem_str:<12} {gpu_str:<12} {status:<10}")
 
-    print("-" * 90)
+    print("-" * 120)
 
     # Summary
     successful = [r for r in results if r.success]
@@ -552,6 +609,21 @@ def print_results_table(results: list[BenchmarkResult], mode: str, audio_duratio
         print(f"\nFastest: {fastest.engine_name}")
         print(f"  Average: {fastest.transcription_time:.2f}s")
         print(f"  Speed: {fastest.speed_ratio:.2f}x realtime")
+        if fastest.memory and fastest.memory.model_memory_mb > 0:
+            print(f"  RAM: {fastest.memory.model_memory_mb:.0f} MB")
+        if fastest.memory and fastest.memory.gpu_memory_mb > 0:
+            print(f"  GPU: {fastest.memory.gpu_memory_mb:.0f} MB")
+
+    # Memory summary
+    print("\nMemory Usage Summary:")
+    for r in results:
+        if r.success and r.memory:
+            model_mem = r.memory.model_memory_mb if r.memory.model_memory_mb > 0 else r.memory.process_memory_mb
+            gpu_mem = r.memory.gpu_memory_mb if r.memory.gpu_memory_mb > 0 else 0
+            if gpu_mem > 0:
+                print(f"  {r.engine_name}: {model_mem:.0f} MB RAM, {gpu_mem:.0f} MB GPU")
+            else:
+                print(f"  {r.engine_name}: {model_mem:.0f} MB RAM")
 
     print("\n")
 

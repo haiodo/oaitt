@@ -26,3 +26,4 @@ python-multipart
 hydra-core
 omegaconf
 sentencepiece
+psutil  # Memory monitoring

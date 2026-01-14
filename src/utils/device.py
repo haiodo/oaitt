@@ -11,8 +11,16 @@ Licensed under MIT License.
 
 import gc
 import logging
+import os
+from typing import Optional
 
 import torch
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 from src.config import DEVICE
 
@@ -109,3 +117,110 @@ def get_device_info() -> dict:
         info["cuda_device_name"] = torch.cuda.get_device_name(0)
 
     return info
+
+
+def get_process_memory_mb() -> float:
+    """
+    Возвращает текущее использование памяти процессом в МБ.
+
+    Использует psutil для получения RSS (Resident Set Size).
+
+    Returns:
+        Использование памяти в МБ, или -1 если psutil недоступен.
+    """
+    if not PSUTIL_AVAILABLE:
+        return -1.0
+
+    try:
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        return memory_info.rss / (1024 * 1024)  # Convert to MB
+    except Exception as e:
+        logger.warning(f"Failed to get process memory: {e}")
+        return -1.0
+
+
+def get_gpu_memory_mb() -> Optional[float]:
+    """
+    Возвращает использование памяти GPU в МБ.
+
+    Для CUDA возвращает allocated memory.
+    Для MPS возвращает allocated memory (если доступно).
+
+    Returns:
+        Использование памяти GPU в МБ, или None если GPU недоступен.
+    """
+    if torch.cuda.is_available():
+        try:
+            return torch.cuda.memory_allocated() / (1024 * 1024)
+        except Exception as e:
+            logger.warning(f"Failed to get CUDA memory: {e}")
+            return None
+
+    if torch.backends.mps.is_available():
+        try:
+            # MPS doesn't have direct memory query, but we can get driver allocated
+            return torch.mps.driver_allocated_memory() / (1024 * 1024)
+        except Exception as e:
+            logger.debug(f"MPS memory query not available: {e}")
+            return None
+
+    return None
+
+
+def get_memory_info() -> dict:
+    """
+    Возвращает полную информацию об использовании памяти.
+
+    Returns:
+        Словарь с информацией о памяти:
+        - process_memory_mb: Память процесса (RSS) в МБ
+        - gpu_memory_mb: Память GPU в МБ (если доступно)
+        - gpu_memory_reserved_mb: Зарезервированная память GPU (CUDA only)
+        - system_memory_total_mb: Общая системная память
+        - system_memory_available_mb: Доступная системная память
+    """
+    info = {
+        "process_memory_mb": round(get_process_memory_mb(), 1),
+    }
+
+    # GPU memory
+    gpu_mem = get_gpu_memory_mb()
+    if gpu_mem is not None:
+        info["gpu_memory_mb"] = round(gpu_mem, 1)
+
+    # CUDA reserved memory
+    if torch.cuda.is_available():
+        try:
+            info["gpu_memory_reserved_mb"] = round(
+                torch.cuda.memory_reserved() / (1024 * 1024), 1
+            )
+        except Exception:
+            pass
+
+    # System memory
+    if PSUTIL_AVAILABLE:
+        try:
+            mem = psutil.virtual_memory()
+            info["system_memory_total_mb"] = round(mem.total / (1024 * 1024), 1)
+            info["system_memory_available_mb"] = round(mem.available / (1024 * 1024), 1)
+        except Exception as e:
+            logger.warning(f"Failed to get system memory: {e}")
+
+    return info
+
+
+def get_model_memory_usage(baseline_mb: float) -> float:
+    """
+    Вычисляет использование памяти моделью относительно базовой линии.
+
+    Args:
+        baseline_mb: Базовое использование памяти до загрузки модели в МБ.
+
+    Returns:
+        Разница в использовании памяти в МБ.
+    """
+    current = get_process_memory_mb()
+    if current < 0 or baseline_mb < 0:
+        return -1.0
+    return current - baseline_mb

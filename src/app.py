@@ -57,7 +57,8 @@ async def lifespan(app: FastAPI):
 
     try:
         _asr_model = create_asr_model()
-        _asr_model.load_model()
+        # Use ensure_model_loaded() to get memory tracking
+        _asr_model.ensure_model_loaded()
 
         # Set model reference in all routers
         set_asr_model_asr(_asr_model)
