@@ -24,6 +24,7 @@ from typing import Optional, Union, List
 
 import numpy as np
 import soundfile as sf
+import torch
 
 from src.asr.base import ASRModel
 from src.config import (
@@ -195,17 +196,12 @@ class GigaAMASR(ASRModel):
                         )
                         raw_result = self._transcribe_chunked(audio)
                 else:
-                    # Short audio - use simple transcribe
-                    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-                    os.close(fd)
-                    sf.write(tmp_path, audio, SAMPLE_RATE)
-                    logger.debug(f"Saved temporary audio to {tmp_path} for GigaAM inference")
-
-                    logger.info(f"Using GigaAM.transcribe for duration={duration:.2f}s")
-                    raw_result = self.model.transcribe(tmp_path)
+                    # Short audio - use direct tensor transcription (no temp file needed)
+                    logger.info(f"Using direct tensor transcription for duration={duration:.2f}s")
+                    raw_result = self._transcribe_audio_tensor(audio)
 
         finally:
-            # Clean up temp file
+            # Clean up temp file (only used for transcribe_longform)
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
@@ -255,6 +251,40 @@ class GigaAMASR(ASRModel):
 
         return results
 
+    def _transcribe_audio_tensor(self, audio: np.ndarray) -> str:
+        """
+        Транскрибирует аудио напрямую из numpy array без сохранения во временный файл.
+
+        Использует внутренние методы GigaAM модели для обработки тензора напрямую,
+        минуя загрузку из файла через ffmpeg.
+
+        Args:
+            audio: numpy array аудио данных (16kHz, mono, float32)
+
+        Returns:
+            Строка с транскрипцией
+        """
+        # Convert numpy array to torch tensor
+        # GigaAM expects float tensor normalized to [-1, 1]
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+
+        wav_tensor = torch.from_numpy(audio)
+
+        # Get model device and dtype
+        device = self.model._device
+        dtype = self.model._dtype
+
+        # Prepare tensor like model.prepare_wav() does, but from memory
+        wav = wav_tensor.to(device).to(dtype).unsqueeze(0)
+        length = torch.full([1], wav.shape[-1], device=device)
+
+        # Run forward pass and decode (same as model.transcribe() but without file loading)
+        encoded, encoded_len = self.model.forward(wav, length)
+        result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
+
+        return result
+
     def _transcribe_chunk_with_retry(
         self,
         chunk_audio: np.ndarray,
@@ -282,13 +312,9 @@ class GigaAMASR(ASRModel):
 
         # If chunk is within allowed size, try to transcribe directly
         if duration <= max_chunk_sec:
-            path = None
             try:
-                fd, path = tempfile.mkstemp(suffix=".wav")
-                os.close(fd)
-                sf.write(path, chunk_audio, SAMPLE_RATE)
-
-                raw_chunk = self.model.transcribe(path)
+                # Use direct tensor transcription (no temp file needed)
+                raw_chunk = self._transcribe_audio_tensor(chunk_audio)
 
                 # Normalize result to text
                 if isinstance(raw_chunk, str):
@@ -305,7 +331,7 @@ class GigaAMASR(ASRModel):
                     })
                 return results
 
-            except ValueError as ve:
+            except (ValueError, RuntimeError) as ve:
                 msg = str(ve)
                 # If the model complains it's too long, split further
                 if "Too long" in msg or "longform" in msg.lower():
@@ -324,12 +350,6 @@ class GigaAMASR(ASRModel):
                     ))
                     return results
                 raise
-            finally:
-                if path and os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
 
         # If chunk is larger than allowed max, split into halves
         mid = len(chunk_audio) // 2
