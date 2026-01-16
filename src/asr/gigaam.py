@@ -225,13 +225,36 @@ class GigaAMASR(ASRModel):
         """
         results = []
         chunk_samples = int(GIGAAM_CHUNK_SEC * SAMPLE_RATE)
+        min_chunk_samples = int(GIGAAM_MIN_CHUNK_SEC * SAMPLE_RATE)
         num_samples = len(audio)
-        pos = 0
 
+        # Build chunk boundaries first in order to avoid creating a tiny final chunk
+        # (for example when audio length is slightly larger than chunk size).
+        chunks = []
+        pos = 0
         while pos < num_samples:
             end_pos = min(pos + chunk_samples, num_samples)
-            chunk_audio = audio[pos:end_pos]
-            start_sec = pos / SAMPLE_RATE
+            remaining = num_samples - pos
+            # If the remaining part is smaller than the minimum chunk, merge it into
+            # the previous chunk to avoid very short chunks that may break feature extraction.
+            if remaining < min_chunk_samples and chunks:
+                prev_start, _ = chunks[-1]
+                # Extend previous chunk to include the remainder
+                chunks[-1] = (prev_start, num_samples)
+                logger.debug(
+                    "Merging tiny final remainder (%d samples, %.3fs) "
+                    "into previous chunk starting at %.2fs",
+                    remaining,
+                    remaining / SAMPLE_RATE,
+                    prev_start / SAMPLE_RATE,
+                )
+                break
+            chunks.append((pos, end_pos))
+            pos = end_pos
+
+        for start, end in chunks:
+            chunk_audio = audio[start:end]
+            start_sec = start / SAMPLE_RATE
 
             try:
                 subchunks = self._transcribe_chunk_with_retry(
@@ -246,8 +269,6 @@ class GigaAMASR(ASRModel):
                 bounds = sc.get("boundaries")
                 if text:
                     results.append({"transcription": text, "boundaries": bounds})
-
-            pos = end_pos
 
         return results
 

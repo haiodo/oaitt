@@ -438,18 +438,43 @@ class TransformersASR(ASRModel):
         """
         results = []
         chunk_samples = int(GIGAAM_CHUNK_SEC * SAMPLE_RATE)
+        min_chunk_samples = int(GIGAAM_MIN_CHUNK_SEC * SAMPLE_RATE)
         num_samples = len(audio)
-        pos = 0
 
         logger.debug(
             f"Chunked pipeline transcription: {num_samples} samples, "
             f"chunk size {chunk_samples} ({GIGAAM_CHUNK_SEC}s)"
         )
 
+        # Pre-compute chunk boundaries to avoid creating a very small final chunk
+        # (for example when audio length is slightly larger than chunk size).
+        chunks = []
+        pos = 0
         while pos < num_samples:
             end_pos = min(pos + chunk_samples, num_samples)
-            chunk_audio = audio[pos:end_pos]
-            start_sec = pos / SAMPLE_RATE
+            remaining = num_samples - pos
+
+            # If the remaining part is smaller than the minimum chunk and we have at
+            # least one previous chunk, merge the remainder into the previous chunk.
+            if remaining < min_chunk_samples and chunks:
+                prev_start, _ = chunks[-1]
+                # Extend previous chunk to include the remainder
+                chunks[-1] = (prev_start, num_samples)
+                logger.debug(
+                    "Merging tiny final remainder (%d samples, %.3fs) "
+                    "into previous chunk starting at %.2fs",
+                    remaining,
+                    remaining / SAMPLE_RATE,
+                    prev_start / SAMPLE_RATE,
+                )
+                break
+
+            chunks.append((pos, end_pos))
+            pos = end_pos
+
+        for start, end in chunks:
+            chunk_audio = audio[start:end]
+            start_sec = start / SAMPLE_RATE
             chunk_duration = len(chunk_audio) / SAMPLE_RATE
 
             logger.debug(
