@@ -42,6 +42,7 @@ from src.config import (
 GIGAAM_USE_LONGFORM = os.environ.get("GIGAAM_USE_LONGFORM", "false").lower() == "true"
 from src.models.schemas import Segment, TranscriptionResponse, WordTimestamp
 from src.utils.audio import get_audio_duration, normalize_audio
+from src.utils.device import clear_memory_cache
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,9 @@ class GigaAMASR(ASRModel):
                 except Exception:
                     logger.debug("Failed to remove temporary audio file", exc_info=True)
 
+            # Clear memory cache to prevent accumulation over multiple transcriptions
+            clear_memory_cache()
+
         # Format and return result
         return self._format_result(
             raw_result, duration=duration, output=output, language="ru"
@@ -270,6 +274,9 @@ class GigaAMASR(ASRModel):
                 if text:
                     results.append({"transcription": text, "boundaries": bounds})
 
+            # Clear memory after each chunk to prevent accumulation
+            clear_memory_cache()
+
         return results
 
     def _transcribe_audio_tensor(self, audio: np.ndarray) -> str:
@@ -300,9 +307,24 @@ class GigaAMASR(ASRModel):
         wav = wav_tensor.to(device).to(dtype).unsqueeze(0)
         length = torch.full([1], wav.shape[-1], device=device)
 
-        # Run forward pass and decode (same as model.transcribe() but without file loading)
-        encoded, encoded_len = self.model.forward(wav, length)
-        result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
+        encoded = None
+        encoded_len = None
+        try:
+            # Run forward pass and decode (same as model.transcribe() but without file loading)
+            encoded, encoded_len = self.model.forward(wav, length)
+            result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
+        finally:
+            # Clear intermediate tensors to prevent memory accumulation
+            del wav, length
+            if encoded is not None:
+                del encoded
+            if encoded_len is not None:
+                del encoded_len
+            # Clear CUDA/MPS cache to prevent memory fragmentation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif torch.backends.mps.is_available():
+                torch.mps.empty_cache()
 
         return result
 
