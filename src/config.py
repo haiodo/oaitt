@@ -128,6 +128,19 @@ CONFIDENCE_FILTER_ENABLED = os.getenv("CONFIDENCE_FILTER_ENABLED", "false").lowe
 # Baseline characters per second considered normal (approx 20-30 chars/sec typical speaking rate)
 MAX_CHARS_PER_SECOND = float(os.getenv("MAX_CHARS_PER_SECOND", "25.0"))
 
+# =============================================================================
+# Memory Monitoring Configuration
+# =============================================================================
+
+# Enable/disable memory monitoring
+MEMORY_LOG_ENABLED = os.getenv("MEMORY_LOG_ENABLED", "false").lower() == "true"
+
+# Interval for memory logging in seconds (default: 60)
+MEMORY_LOG_INTERVAL = int(os.getenv("MEMORY_LOG_INTERVAL", "60"))
+
+# Number of top allocation sites to log (0 to disable tracemalloc)
+MEMORY_LOG_TOP_ALLOCATIONS = int(os.getenv("MEMORY_LOG_TOP_ALLOCATIONS", "5"))
+
 # Multiplier - if observed chars/sec exceeds baseline * multiplier, mark as suspicious
 CHARS_PER_SECOND_MULTIPLIER = float(os.getenv("CHARS_PER_SECOND_MULTIPLIER", "3.0"))
 

@@ -89,6 +89,15 @@ def main():
     except Exception as e:
         logger.warning(f"Failed to setup torch serialization: {e}")
 
+    # Start memory monitoring if enabled
+    from src.config import MEMORY_LOG_ENABLED
+    if MEMORY_LOG_ENABLED:
+        from src.services.memory_monitor import start_memory_monitor, stop_memory_monitor
+        start_memory_monitor()
+        logger.info("Memory monitoring enabled")
+    else:
+        stop_memory_monitor = None
+
     # Import and run the application
     try:
         from src.app import run_server
@@ -99,6 +108,10 @@ def main():
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        # Stop memory monitoring
+        if MEMORY_LOG_ENABLED and stop_memory_monitor:
+            stop_memory_monitor()
 
 
 if __name__ == "__main__":

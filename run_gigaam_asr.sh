@@ -10,6 +10,14 @@
 #   - v2_rnnt, v2_ctc (older version)
 #   - v1_rnnt, v1_ctc (oldest version)
 #
+# Memory debugging options:
+#   MEMORY_LOG_ENABLED=true     - Enable periodic memory logging
+#   MEMORY_LOG_INTERVAL=60      - Log interval in seconds (default: 60)
+#   MEMORY_LOG_TOP_ALLOCATIONS=5 - Number of top allocation sites to log
+#
+# Example with memory monitoring:
+#   MEMORY_LOG_ENABLED=true MEMORY_LOG_INTERVAL=30 ./run_gigaam_asr.sh
+#
 
 export ASR_ENGINE=gigaam
 export GIGAAM_MODEL=${GIGAAM_MODEL:-v3_e2e_ctc}
