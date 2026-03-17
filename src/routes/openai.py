@@ -134,6 +134,7 @@ async def openai_transcribe(
 
         # Convert audio to numpy array
         audio_data = load_audio_from_file(audio_content)
+        del audio_content
         audio_duration_sec = len(audio_data) / SAMPLE_RATE
         logger.info(
             f"[OpenAI API] Audio converted: {len(audio_data)} samples, "

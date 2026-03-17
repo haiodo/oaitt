@@ -11,7 +11,8 @@ Licensed under MIT License.
 """
 
 import logging
-from threading import Lock
+from collections import deque
+from threading import RLock
 from typing import Optional
 
 from src.config import (
@@ -55,8 +56,8 @@ class PerformanceTracker:
         """
         self.history_size = history_size
         # Store tuples of (audio_duration_sec, processing_time_sec)
-        self.history: list[tuple[float, float]] = []
-        self.lock = Lock()
+        self.history: deque[tuple[float, float]] = deque(maxlen=history_size)
+        self.lock = RLock()
         # Cached ratio (processing_time / audio_duration)
         self._avg_ratio: Optional[float] = None
 
@@ -78,9 +79,6 @@ class PerformanceTracker:
 
         with self.lock:
             self.history.append((audio_duration_sec, processing_time_sec))
-            # Keep only recent history
-            if len(self.history) > self.history_size:
-                self.history = self.history[-self.history_size:]
             # Invalidate cached ratio
             self._avg_ratio = None
 

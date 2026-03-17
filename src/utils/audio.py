@@ -53,22 +53,32 @@ def load_audio_from_file(audio_content: bytes) -> np.ndarray:
         audio_buffer.seek(0)
         audio_data, sample_rate = librosa.load(audio_buffer, sr=None, mono=True)
 
+    # Free the BytesIO buffer immediately — no longer needed
+    audio_buffer.close()
+    del audio_buffer
+
     # Convert to mono if stereo
     if len(audio_data.shape) > 1:
-        audio_data = np.mean(audio_data, axis=1)
+        stereo = audio_data
+        audio_data = np.mean(stereo, axis=1)
+        del stereo
         logger.debug("Converted stereo to mono")
 
     # Resample to 16kHz if needed (Whisper requirement)
     if sample_rate != SAMPLE_RATE:
         logger.debug(f"Resampling from {sample_rate}Hz to {SAMPLE_RATE}Hz")
+        original = audio_data
         audio_data = librosa.resample(
-            audio_data,
+            original,
             orig_sr=sample_rate,
-            target_sr=SAMPLE_RATE
+            target_sr=SAMPLE_RATE,
         )
+        del original
 
-    # Ensure float32
-    return audio_data.astype(np.float32)
+    # Ensure float32 (avoid copy if already float32)
+    if audio_data.dtype != np.float32:
+        return audio_data.astype(np.float32)
+    return audio_data
 
 
 def get_audio_duration(audio_data: np.ndarray) -> float:

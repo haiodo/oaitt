@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Counter for periodic cleanup
+_save_count = 0
+_CLEANUP_EVERY_N = 100
+
 
 def save_debug_log(
     audio_data: np.ndarray,
@@ -53,6 +57,14 @@ def save_debug_log(
     """
     if not DEBUG_LOG_DIR:
         return None, None
+
+    global _save_count
+    _save_count += 1
+    if _save_count % _CLEANUP_EVERY_N == 0:
+        try:
+            cleanup_old_logs()
+        except Exception as e:
+            logger.debug(f"Periodic cleanup failed: {e}")
 
     try:
         # Generate unique filename with timestamp

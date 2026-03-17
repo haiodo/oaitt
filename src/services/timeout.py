@@ -12,6 +12,7 @@ Licensed under MIT License.
 
 import concurrent.futures
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING, Union
 
@@ -25,6 +26,15 @@ if TYPE_CHECKING:
     from src.asr.base import ASRModel
 
 logger = logging.getLogger(__name__)
+
+# Track zombie (timed-out but still running) transcription threads
+_zombie_count = 0
+_zombie_lock = threading.Lock()
+
+
+def get_zombie_count() -> int:
+    """Returns the number of timed-out transcriptions still running in background."""
+    return _zombie_count
 
 
 class TranscriptionTimeoutError(Exception):
@@ -50,6 +60,62 @@ class TranscriptionTimeoutError(Exception):
         )
 
 
+def _run_transcription_with_cleanup(
+    asr_model: "ASRModel",
+    audio: np.ndarray,
+    task: str,
+    language: str | None,
+    word_timestamps: bool,
+    output: str,
+    timed_out: threading.Event,
+) -> Union["TranscriptionResponse", str]:
+    """
+    Wrapper that runs transcription and cleans up if the caller has timed out.
+
+    Args:
+        asr_model: ASR model instance.
+        audio: Audio data.
+        task: Transcription task.
+        language: Language code.
+        word_timestamps: Whether to include word timestamps.
+        output: Output format.
+        timed_out: Event that is set if the caller has already timed out.
+
+    Returns:
+        Transcription result.
+    """
+    global _zombie_count
+    try:
+        result = asr_model.transcribe(
+            audio=audio,
+            task=task,
+            language=language,
+            word_timestamps=word_timestamps,
+            output=output,
+        )
+        if timed_out.is_set():
+            logger.warning(
+                "Background transcription completed after caller timed out — "
+                "result discarded, resources freed"
+            )
+        return result
+    except Exception as e:
+        if timed_out.is_set():
+            logger.warning(
+                f"Background transcription failed after caller timed out: {e}"
+            )
+        raise
+    finally:
+        if timed_out.is_set():
+            with _zombie_lock:
+                _zombie_count = max(0, _zombie_count - 1)
+            logger.info(
+                f"Zombie transcription thread finished (remaining zombies: {_zombie_count})"
+            )
+            # Help GC reclaim audio data sooner
+            del audio
+
+
 def transcribe_with_timeout(
     asr_model: "ASRModel",
     audio: np.ndarray,
@@ -62,7 +128,7 @@ def transcribe_with_timeout(
     """
     Выполняет транскрипцию с адаптивным таймаутом.
 
-    Запускает транскрипцию в отдельном потоке и прерывает её,
+    Запускает транскрипцию в отдельном потоке и прерывает ожидание,
     если она превышает вычисленный таймаут на основе исторических
     данных производительности.
 
@@ -82,19 +148,9 @@ def transcribe_with_timeout(
 
     Raises:
         TranscriptionTimeoutError: Если транскрипция превысила таймаут.
-
-    Example:
-        >>> result, elapsed = transcribe_with_timeout(
-        ...     asr_model=model,
-        ...     audio=audio_data,
-        ...     audio_duration_sec=30.0,
-        ...     task="transcribe",
-        ...     language="en",
-        ...     word_timestamps=True,
-        ...     output="json",
-        ... )
-        >>> print(f"Transcription took {elapsed:.2f}s")
     """
+    global _zombie_count
+
     if not TIMEOUT_ENABLED:
         # Timeout disabled - run directly
         start_time = time.perf_counter()
@@ -117,17 +173,29 @@ def transcribe_with_timeout(
         f"timeout={timeout:.2f}s (audio={audio_duration_sec:.2f}s)"
     )
 
+    if _zombie_count > 0:
+        logger.warning(
+            f"There are {_zombie_count} zombie transcription thread(s) "
+            f"still running from previous timeouts"
+        )
+
+    # Event to signal the worker that the caller has timed out
+    timed_out = threading.Event()
+
     # Run transcription in a thread with timeout
     start_time = time.perf_counter()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
         future = executor.submit(
-            asr_model.transcribe,
+            _run_transcription_with_cleanup,
+            asr_model=asr_model,
             audio=audio,
             task=task,
             language=language,
             word_timestamps=word_timestamps,
             output=output,
+            timed_out=timed_out,
         )
 
         try:
@@ -141,17 +209,34 @@ def transcribe_with_timeout(
 
         except concurrent.futures.TimeoutError:
             elapsed = time.perf_counter() - start_time
-            # Cancel the future (though it may continue running in background)
-            future.cancel()
+
+            # Signal the worker that we've timed out
+            timed_out.set()
+
+            # Track this as a zombie thread
+            with _zombie_lock:
+                _zombie_count += 1
 
             logger.warning(
                 f"Transcription timed out: elapsed={elapsed:.1f}s, "
                 f"timeout={timeout:.1f}s, expected={expected_time:.1f}s, "
-                f"audio={audio_duration_sec:.2f}s"
+                f"audio={audio_duration_sec:.2f}s. "
+                f"Background thread will continue until completion "
+                f"(zombie count: {_zombie_count})"
             )
+
+            # Shutdown executor without waiting — let the thread finish in background
+            executor.shutdown(wait=False)
 
             raise TranscriptionTimeoutError(
                 timeout=timeout,
                 elapsed=elapsed,
                 expected=expected_time,
             )
+    except TranscriptionTimeoutError:
+        raise
+    except Exception:
+        executor.shutdown(wait=False)
+        raise
+    else:
+        executor.shutdown(wait=False)

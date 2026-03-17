@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 # Default model name for GigaAM
 DEFAULT_GIGAAM_MODEL = "v3_e2e_rnnt"
 
+# Maximum recursion depth for chunk splitting to prevent unbounded memory usage
+_MAX_CHUNK_SPLIT_DEPTH = 10
+
 
 class GigaAMASR(ASRModel):
     """
@@ -334,6 +337,7 @@ class GigaAMASR(ASRModel):
         start_sec: float,
         max_chunk_sec: float,
         min_chunk_sec: float,
+        _depth: int = 0,
     ) -> List[dict]:
         """
         Транскрибирует кусок аудио с автоматическим разделением при ошибке.
@@ -349,6 +353,13 @@ class GigaAMASR(ASRModel):
         """
         results = []
         duration = len(chunk_audio) / SAMPLE_RATE
+
+        if _depth > _MAX_CHUNK_SPLIT_DEPTH:
+            logger.error(
+                f"Maximum chunk split depth ({_MAX_CHUNK_SPLIT_DEPTH}) exceeded "
+                f"at {start_sec:.2f}s, duration={duration:.2f}s — skipping chunk"
+            )
+            return results
 
         if duration <= 0:
             return results
@@ -386,10 +397,10 @@ class GigaAMASR(ASRModel):
                     second = chunk_audio[mid:]
                     mid_sec = start_sec + mid / SAMPLE_RATE
                     results.extend(self._transcribe_chunk_with_retry(
-                        first, start_sec, max_chunk_sec, min_chunk_sec
+                        first, start_sec, max_chunk_sec, min_chunk_sec, _depth=_depth + 1
                     ))
                     results.extend(self._transcribe_chunk_with_retry(
-                        second, mid_sec, max_chunk_sec, min_chunk_sec
+                        second, mid_sec, max_chunk_sec, min_chunk_sec, _depth=_depth + 1
                     ))
                     return results
                 raise
@@ -400,10 +411,10 @@ class GigaAMASR(ASRModel):
         second = chunk_audio[mid:]
         mid_sec = start_sec + mid / SAMPLE_RATE
         results.extend(self._transcribe_chunk_with_retry(
-            first, start_sec, max_chunk_sec, min_chunk_sec
+            first, start_sec, max_chunk_sec, min_chunk_sec, _depth=_depth + 1
         ))
         results.extend(self._transcribe_chunk_with_retry(
-            second, mid_sec, max_chunk_sec, min_chunk_sec
+            second, mid_sec, max_chunk_sec, min_chunk_sec, _depth=_depth + 1
         ))
         return results
 
