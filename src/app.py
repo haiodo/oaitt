@@ -17,7 +17,8 @@ from fastapi import FastAPI
 from src import __version__
 from src.asr.factory import create_asr_model
 from src.asr.base import ASRModel
-from src.config import ASR_ENGINE, HOST, PORT
+from src.asr.pool import ASRWorkerPool
+from src.config import ASR_ENGINE, HOST, PORT, MODEL_WORKERS
 from src.routes import asr_router, health_router, openai_router
 from src.routes.asr import set_asr_model as set_asr_model_asr
 from src.routes.health import set_asr_model as set_asr_model_health
@@ -56,16 +57,25 @@ async def lifespan(app: FastAPI):
     logger.info(f"Initializing ASR with engine: {ASR_ENGINE}")
 
     try:
-        _asr_model = create_asr_model()
-        # Use ensure_model_loaded() to get memory tracking
-        _asr_model.ensure_model_loaded()
+        if MODEL_WORKERS > 1:
+            logger.info(f"Using worker pool with {MODEL_WORKERS} model instances")
+            pool = ASRWorkerPool(num_workers=MODEL_WORKERS)
+            pool.load_all()
+            _asr_model = pool
+        else:
+            _asr_model = create_asr_model()
+            # Use ensure_model_loaded() to get memory tracking
+            _asr_model.ensure_model_loaded()
 
         # Set model reference in all routers
         set_asr_model_asr(_asr_model)
         set_asr_model_health(_asr_model)
         set_asr_model_openai(_asr_model)
 
-        logger.info("ASR model loaded successfully")
+        logger.info(
+            f"ASR model loaded successfully "
+            f"(workers={MODEL_WORKERS})"
+        )
 
     except Exception as e:
         logger.error(f"Failed to load ASR model: {e}", exc_info=True)

@@ -52,6 +52,9 @@ GIGAAM_MIN_CHUNK_SEC = int(os.getenv("GIGAAM_MIN_CHUNK_SEC", "5"))
 # Device to use: "auto", "cuda", "cpu", "mps"
 DEVICE = os.getenv("DEVICE", "auto")
 
+# Number of model worker instances for parallel inference (1 = single model, no parallelism)
+MODEL_WORKERS = int(os.getenv("MODEL_WORKERS", "1"))
+
 # Compute type for WhisperX: "float16", "float32", "int8", etc.
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "float32")
 

@@ -10,6 +10,12 @@
 #   - v2_rnnt, v2_ctc (older version)
 #   - v1_rnnt, v1_ctc (oldest version)
 #
+# Parallel inference options:
+#   MODEL_WORKERS=N             - Number of model instances (default: 1)
+#                                 Each worker loads its own copy of the model
+#                                 and processes requests independently.
+#                                 Example: MODEL_WORKERS=4 ./run_gigaam_asr.sh
+#
 # Memory debugging options:
 #   MEMORY_LOG_ENABLED=true     - Enable periodic memory logging
 #   MEMORY_LOG_INTERVAL=60      - Log interval in seconds (default: 60)
