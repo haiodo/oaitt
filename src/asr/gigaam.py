@@ -313,9 +313,11 @@ class GigaAMASR(ASRModel):
         encoded = None
         encoded_len = None
         try:
-            # Run forward pass and decode (same as model.transcribe() but without file loading)
-            encoded, encoded_len = self.model.forward(wav, length)
-            result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
+            # Run forward pass with inference_mode to prevent memory leak
+            # (without this, PyTorch keeps computation graph for backward pass)
+            with torch.inference_mode():
+                encoded, encoded_len = self.model.forward(wav, length)
+                result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
         finally:
             # Clear intermediate tensors to prevent memory accumulation
             del wav, length

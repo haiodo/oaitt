@@ -4,3 +4,4 @@ data
 __pycache__
 private
 private_output
+logs

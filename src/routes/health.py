@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from src.config import ASR_ENGINE, TIMEOUT_ENABLED
+from src.services.memory_monitor import memory_monitor
 from src.services.performance import performance_tracker
 from src.utils.device import get_memory_info
 
@@ -120,3 +121,71 @@ async def health_check_detailed() -> dict:
         "performance": perf_stats,
         "debug_logging": debug_stats,
     }
+
+
+@router.post("/admin/memory-snapshot")
+async def save_memory_snapshot(filepath: str = "./memory_snapshot.snapshot") -> dict:
+    """
+    Сохраняет текущий снапшот памяти сервера в файл.
+
+    Args:
+        filepath: Путь к файлу для сохранения снапшота.
+
+    Returns:
+        dict: Результат операции.
+
+    Example:
+        POST /admin/memory-snapshot?filepath=./snapshots/snapshot_001.snapshot
+    """
+    import os
+    from pathlib import Path
+
+    # Ensure directory exists
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    success = memory_monitor.save_snapshot(str(path))
+
+    if success:
+        file_size = os.path.getsize(path)
+        return {
+            "success": True,
+            "filepath": str(path),
+            "size_bytes": file_size,
+            "message": f"Memory snapshot saved successfully"
+        }
+    else:
+        return {
+            "success": False,
+            "filepath": str(path),
+            "message": "Failed to save memory snapshot. Is tracemalloc enabled?"
+        }
+
+
+@router.get("/admin/memory-stats")
+async def get_memory_stats() -> dict:
+    """
+    Возвращает текущую статистику использования памяти.
+
+    Returns:
+        dict: Информация о памяти процесса.
+    """
+    import tracemalloc
+    import psutil
+    import os
+
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+
+    stats = {
+        "rss_mb": mem_info.rss / (1024 * 1024),
+        "vms_mb": mem_info.vms / (1024 * 1024),
+        "tracemalloc_enabled": tracemalloc.is_tracing(),
+    }
+
+    if tracemalloc.is_tracing():
+        current, peak = tracemalloc.get_traced_memory()
+        stats["tracemalloc_current_mb"] = current / (1024 * 1024)
+        stats["tracemalloc_peak_mb"] = peak / (1024 * 1024)
+
+    return stats
