@@ -84,19 +84,21 @@ def clear_memory_cache() -> None:
     """
     Очищает кэш памяти для текущего устройства.
 
-    Вызывает соответствующую функцию очистки для CUDA или MPS,
-    а также запускает сборщик мусора Python.
+    Вызывает соответствующую функцию очистки для CUDA или MPS.
     """
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        logger.debug("CUDA cache cleared")
+        torch.cuda.synchronize()
+        logger.debug("CUDA cache cleared and synchronized")
 
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
+        # MPS synchronize may not be available in all PyTorch versions
+        try:
+            torch.mps.synchronize()
+        except AttributeError:
+            pass
         logger.debug("MPS cache cleared")
-
-    gc.collect()
-    logger.debug("Garbage collection completed")
 
 
 def get_device_info() -> dict:

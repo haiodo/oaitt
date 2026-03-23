@@ -233,10 +233,7 @@ def transcribe_with_timeout(
                 elapsed=elapsed,
                 expected=expected_time,
             )
-    except TranscriptionTimeoutError:
-        raise
-    except Exception:
-        executor.shutdown(wait=False)
-        raise
-    else:
+    finally:
+        # Always shutdown executor, but don't wait for background threads
+        # (they may be zombie threads from timeouts)
         executor.shutdown(wait=False)
