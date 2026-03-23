@@ -15,10 +15,18 @@ from typing import Optional, Union
 
 import numpy as np
 
-# Apply PyTorch 2.6+ compatibility patch BEFORE importing whisperx
-# This fixes the weights_only=True issue with pyannote.audio VAD models
-from src.utils.torch_compat import patch_torch_load_weights_only
-patch_torch_load_weights_only()
+# Check if whisperx is available
+try:
+    import whisperx
+    _WHISPERX_AVAILABLE = True
+except ImportError:
+    _WHISPERX_AVAILABLE = False
+
+if _WHISPERX_AVAILABLE:
+    # Apply PyTorch 2.6+ compatibility patch BEFORE importing whisperx
+    # This fixes the weights_only=True issue with pyannote.audio VAD models
+    from src.utils.torch_compat import patch_torch_load_weights_only
+    patch_torch_load_weights_only()
 
 from src.asr.base import ASRModel
 from src.config import (
@@ -81,6 +89,11 @@ class WhisperXASR(ASRModel):
 
     def __init__(self):
         """Инициализирует WhisperXASR."""
+        if not _WHISPERX_AVAILABLE:
+            raise ImportError(
+                "WhisperX engine is not available. "
+                "Please install it with: pip install -r requirements-whisperx.txt"
+            )
         super().__init__()
         self.model = {
             "whisperx": None,
@@ -101,8 +114,6 @@ class WhisperXASR(ASRModel):
         Raises:
             Exception: При ошибке загрузки модели.
         """
-        import whisperx
-
         device = get_device()
 
         # WhisperX (ctranslate2) doesn't support MPS directly, fall back to CPU
