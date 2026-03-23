@@ -17,6 +17,7 @@ Copyright (c) 2026 Andrey Sobolev (haiodo@gmail.com)
 Licensed under MIT License.
 """
 
+import gc
 import logging
 import os
 import tempfile
@@ -45,6 +46,12 @@ from src.utils.audio import get_audio_duration, normalize_audio
 from src.utils.device import clear_memory_cache
 
 logger = logging.getLogger(__name__)
+
+# Memory cleanup configuration
+# Cleanup every N transcriptions to prevent gradual memory growth
+GIGAAM_CLEANUP_EVERY_N = int(os.environ.get("GIGAAM_CLEANUP_EVERY_N", "100"))
+# Force cleanup if memory grew by this amount (MB) since last cleanup
+GIGAAM_CLEANUP_MEMORY_THRESHOLD_MB = int(os.environ.get("GIGAAM_CLEANUP_MEMORY_THRESHOLD_MB", "2048"))
 
 # Default model name for GigaAM
 DEFAULT_GIGAAM_MODEL = "v3_e2e_rnnt"
@@ -77,6 +84,11 @@ class GigaAMASR(ASRModel):
             # It's an HF path, extract model type or use default
             self.model_name = DEFAULT_GIGAAM_MODEL
             logger.info(f"Detected HF path in GIGAAM_MODEL, using default: {self.model_name}")
+
+        # Memory tracking for smart cleanup
+        self._transcription_count = 0
+        self._last_cleanup_memory = 0
+        self._last_cleanup_count = 0
 
     def load_model(self) -> None:
         """
@@ -125,6 +137,53 @@ class GigaAMASR(ASRModel):
         # Start idle monitor if configured
         if MODEL_IDLE_TIMEOUT > 0:
             self.start_idle_monitor()
+
+    def _maybe_cleanup_memory(self) -> None:
+        """
+        Smart memory cleanup - only when needed.
+        
+        Cleanup triggers:
+        1. Every GIGAAM_CLEANUP_EVERY_N transcriptions
+        2. When memory grew by GIGAAM_CLEANUP_MEMORY_THRESHOLD_MB since last cleanup
+        
+        This avoids expensive cleanup after every transcription while preventing
+        gradual memory growth. See: https://github.com/pytorch/pytorch/issues/154329
+        """
+        self._transcription_count += 1
+        
+        # Check if cleanup needed
+        cleanup_needed = False
+        reason = ""
+        
+        # Check count threshold
+        if self._transcription_count - self._last_cleanup_count >= GIGAAM_CLEANUP_EVERY_N:
+            cleanup_needed = True
+            reason = f"count threshold ({self._transcription_count} transcriptions)"
+        
+        # Check memory threshold (MPS only)
+        if not cleanup_needed and torch.backends.mps.is_available():
+            try:
+                current_mem = torch.mps.driver_allocated_memory() / (1024 * 1024)  # MB
+                if self._last_cleanup_memory > 0:
+                    mem_growth = current_mem - self._last_cleanup_memory
+                    if mem_growth >= GIGAAM_CLEANUP_MEMORY_THRESHOLD_MB:
+                        cleanup_needed = True
+                        reason = f"memory growth ({mem_growth:.0f} MB)"
+            except Exception:
+                pass  # Ignore errors in memory tracking
+        
+        if cleanup_needed:
+            logger.debug(f"Memory cleanup triggered: {reason}")
+            gc.collect()
+            clear_memory_cache()
+            
+            # Update tracking
+            self._last_cleanup_count = self._transcription_count
+            if torch.backends.mps.is_available():
+                try:
+                    self._last_cleanup_memory = torch.mps.driver_allocated_memory() / (1024 * 1024)
+                except Exception:
+                    pass
 
     @torch.inference_mode()
     def transcribe(
@@ -222,8 +281,9 @@ class GigaAMASR(ASRModel):
         if 'raw_result' in locals():
             del raw_result
         
-        # Clear memory cache to prevent accumulation over multiple transcriptions
-        clear_memory_cache()
+        # Smart memory cleanup - only when needed (count or memory threshold)
+        # Prevents gradual memory growth while avoiding expensive cleanup every request
+        self._maybe_cleanup_memory()
         
         return formatted_result
 
@@ -302,6 +362,16 @@ class GigaAMASR(ASRModel):
         Returns:
             Строка с транскрипцией
         """
+        # WORKAROUND for MPS memory leak with variable tensor sizes
+        # Issue: https://github.com/pytorch/pytorch/issues/154329
+        # Solution: Pad to fixed size to prevent mps_copy_ leak
+        original_len = len(audio)
+        max_samples = int(GIGAAM_MAX_SHORT_AUDIO_SEC * SAMPLE_RATE)
+        
+        if len(audio) < max_samples:
+            # Pad to fixed size - prevents MPS variable-size tensor leak
+            audio = np.pad(audio, (0, max_samples - len(audio)))
+        
         # Convert numpy array to torch tensor
         # GigaAM expects float tensor normalized to [-1, 1]
         if audio.dtype != np.float32:
@@ -315,7 +385,7 @@ class GigaAMASR(ASRModel):
 
         # Prepare tensor like model.prepare_wav() does, but from memory
         wav = wav_tensor.to(device).to(dtype).unsqueeze(0)
-        length = torch.full([1], wav.shape[-1], device=device)
+        length = torch.full([1], original_len, device=device)  # Use ORIGINAL length, not padded
 
         encoded = None
         encoded_len = None
