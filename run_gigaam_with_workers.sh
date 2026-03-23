@@ -17,7 +17,7 @@
 #   WORKER_MEMORY_LIMIT_MB=5120 ./run_gigaam_with_workers.sh 4
 #
 
-NUM_WORKERS=${2:-1}
+NUM_WORKERS=${1:2}
 
 export ASR_ENGINE=gigaam
 export GIGAAM_MODEL=${GIGAAM_MODEL:-v3_e2e_ctc}
