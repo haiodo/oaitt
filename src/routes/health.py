@@ -80,6 +80,17 @@ async def health_check() -> dict:
         if "memory" in model_info and "model_memory_mb" in model_info["memory"]:
             memory_info["model_memory_mb"] = model_info["memory"]["model_memory_mb"]
 
+    # Check if using worker pool and add memory limit info
+    worker_config = {}
+    if _asr_model is not None:
+        model_info = _asr_model.get_info()
+        if model_info.get("class") == "ASRWorkerPool":
+            from src.asr.pool import WORKER_MEMORY_LIMIT_MB
+            worker_config = {
+                "worker_memory_limit_mb": WORKER_MEMORY_LIMIT_MB,
+                "workers": model_info.get("pool_size", 1),
+            }
+
     return {
         "status": "healthy",
         "model_loaded": _asr_model is not None and _asr_model.is_loaded(),
@@ -87,6 +98,7 @@ async def health_check() -> dict:
         "timeout_enabled": TIMEOUT_ENABLED,
         "performance": perf_stats,
         "memory": memory_info,
+        **worker_config,
     }
 
 

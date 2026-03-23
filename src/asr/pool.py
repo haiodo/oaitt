@@ -50,6 +50,10 @@ TRANSCRIBE_TIMEOUT = int(os.environ.get("ASR_TRANSCRIBE_TIMEOUT", "600"))
 # Интервал проверки здоровья worker'ов (секунды)
 HEALTH_CHECK_INTERVAL = int(os.environ.get("ASR_HEALTH_CHECK_INTERVAL", "5"))
 
+# Memory limit for worker processes (MB) - restart worker if exceeded
+# Default: 7 GB (7168 MB) for MPS/GPU workers, 0 = disabled
+WORKER_MEMORY_LIMIT_MB = int(os.environ.get("WORKER_MEMORY_LIMIT_MB", "7168"))
+
 # Максимальное количество попыток retry для одной задачи
 MAX_TASK_RETRIES = int(os.environ.get("ASR_MAX_TASK_RETRIES", "2"))
 
@@ -317,16 +321,47 @@ class _HealthMonitor(threading.Thread):
             except Exception as exc:
                 logger.error(f"Health monitor error: {exc}\n{traceback.format_exc()}")
 
+    def _get_worker_memory_mb(self, pid: int) -> int:
+        """Get RSS memory of worker process in MB."""
+        try:
+            import psutil
+            proc = psutil.Process(pid)
+            return proc.memory_info().rss // (1024 * 1024)
+        except Exception:
+            return 0
+
     def _check_workers(self) -> None:
-        """Проверяет каждый worker и перезапускает упавшие."""
+        """Проверяет каждый worker и перезапускает упавшие или те, что превысили лимит памяти."""
         pool = self._pool
 
         for i in range(pool.num_workers):
             proc = pool._processes[i]
+            
+            # Check if worker is alive
             if proc is not None and proc.is_alive():
-                continue
-
-            # Worker мёртв
+                # Check memory limit if configured
+                if WORKER_MEMORY_LIMIT_MB > 0:
+                    mem_mb = self._get_worker_memory_mb(proc.pid)
+                    if mem_mb > WORKER_MEMORY_LIMIT_MB:
+                        logger.warning(
+                            f"Worker {i} (pid={proc.pid}) exceeded memory limit: "
+                            f"{mem_mb} MB > {WORKER_MEMORY_LIMIT_MB} MB. Restarting..."
+                        )
+                        # Terminate worker due to memory limit
+                        try:
+                            proc.terminate()
+                            proc.join(timeout=5)
+                            if proc.is_alive():
+                                proc.kill()
+                                proc.join(timeout=3)
+                        except Exception as e:
+                            logger.error(f"Error terminating worker {i}: {e}")
+                        # Fall through to restart logic below
+                    else:
+                        # Worker is healthy, skip restart
+                        continue
+            
+            # Worker is dead or was terminated due to memory limit
             exitcode = proc.exitcode if proc is not None else None
             pid = proc.pid if proc is not None else None
 
