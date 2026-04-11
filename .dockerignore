@@ -1,0 +1,74 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Data and outputs (will be mounted as volumes)
+# BUT keep data/gigaam for model weights
+data/*
+!data/gigaam/
+private_output/
+samples/
+tmp/
+
+# Tests
+.pytest_cache/
+tests/
+
+# Documentation
+docs/
+*.md
+!readme.md
+
+# Scripts (not needed in image)
+scripts/
+*.sh
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore

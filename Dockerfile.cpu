@@ -1,0 +1,83 @@
+# Dockerfile for OAITT with GigaAM support (CPU mode)
+# Manual PyTorch CPU installation (no official CPU image available)
+# Includes pre-downloaded GigaAM models in data/gigaam
+
+FROM python:3.11-slim-bookworm
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEVICE=cpu \
+    ASR_ENGINE=gigaam \
+    GIGAAM_MODEL=v3_e2e_rnnt \
+    MODEL_CACHE_DIR=/app/data \
+    HF_HOME=/app/data \
+    TORCH_HOME=/app/data/torch
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    libgomp1 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Install PyTorch CPU 2.10.0 (cached layer)
+RUN pip install --no-cache-dir \
+    torch==2.10.0+cpu \
+    torchaudio==2.10.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Install ML/audio dependencies (cached layer)
+RUN pip install --no-cache-dir \
+    numpy==2.0.2 \
+    scipy \
+    soundfile \
+    librosa \
+    transformers>=4.48.0 \
+    sentencepiece \
+    onnx \
+    onnxruntime
+
+# Install web/framework dependencies (cached layer)
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    pydantic \
+    python-multipart \
+    psutil \
+    tqdm
+
+# Install GigaAM dependencies (cached layer)
+RUN pip install --no-cache-dir \
+    hydra-core \
+    omegaconf
+
+# Copy vendor/gigaam and install it
+COPY vendor/gigaam /app/vendor/gigaam
+RUN pip install --no-cache-dir --no-deps /app/vendor/gigaam && \
+    rm -rf /app/vendor/gigaam
+
+# Copy pre-downloaded GigaAM models
+COPY data/gigaam/ /app/data/gigaam/
+
+# Copy application code
+COPY src/ /app/src/
+COPY main.py /app/
+
+# Create cache directory
+RUN mkdir -p /app/data && chmod -R 755 /app/data
+
+# Expose port
+EXPOSE 9007
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9007/health')" || exit 1
+
+# Run the application
+CMD ["python", "main.py"]

@@ -1,0 +1,37 @@
+services:
+  oaitt-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: oaitt-gigaam-cpu
+    ports:
+      - "9007:9007"
+    environment:
+      - DEVICE=cpu
+      - ASR_ENGINE=gigaam
+      - GIGAAM_MODEL=v3_e2e_rnnt
+      - MODEL_CACHE_DIR=/app/data
+      - MODEL_WORKERS=1
+      - HOST=0.0.0.0
+      - PORT=9007
+      - MEMORY_LOG_ENABLED=false
+      # Optional: set auth token
+      # - AUTH_TOKEN=your-secret-token
+    volumes:
+      # Persist model cache between restarts
+      - ./data:/app/data
+      # Optional: mount samples for testing
+      - ./samples:/app/samples:ro
+    restart: unless-stopped
+    # CPU limits (optional)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9007/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

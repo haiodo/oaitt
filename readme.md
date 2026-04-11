@@ -47,6 +47,31 @@ OAITT — это speech-to-text сервис транскрипции с под�
 
 ---
 
+## 🐳 Docker
+
+Быстрый запуск через Docker (CPU режим):
+
+```bash
+# 1. Подготовка (один раз)
+./prepare.sh  # Скачает модели GigaAM
+
+# 2. Сборка образа (локально)
+./build.sh myuser/oaitt-gigaam 1.0.0
+
+# 3. Или сборка + публикация для Linux AMD64/ARM64
+./build.sh --amd64 --arm64 --push myuser/oaitt-gigaam 1.0.0
+
+# 4. Запуск
+docker-compose -f docker-compose.cpu.yml up -d
+```
+
+Подробнее:
+- [`DOCKER_GIGAAM.md`](DOCKER_GIGAAM.md) — документация по Docker
+- [`DOCKER_BUILD.md`](DOCKER_BUILD.md) — инструкции по сборке
+- [`build.sh`](build.sh) — скрипт сборки с поддержкой multi-platform
+
+---
+
 ## 🏗️ Архитектура
 
 ```
