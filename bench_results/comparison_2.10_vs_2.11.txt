@@ -1,0 +1,14 @@
+GigaAM (v3_e2e_ctc, MPS, run_gigaam_asr.sh) — torch 2.10 → 2.11
+
+SHORT (20s x 5 iter):
+  2.10  avg 0.14s | min 0.09 | max 0.28 | speed 144.05x | RAM 788 MB | GPU 1091 MB
+  2.11  avg 0.08s | min 0.05 | max 0.20 | speed 239.64x | RAM 787 MB | GPU 1091 MB
+  Δ     −43% latency | +66% speed
+
+LONG (60s x 3 iter):
+  2.10  avg 0.25s | min 0.19 | max 0.36 | speed 242.13x | RAM 787 MB | GPU 1115 MB
+  2.11  avg 0.19s | min 0.13 | max 0.29 | speed 324.19x | RAM 787 MB | GPU 1115 MB
+  Δ     −24% latency | +34% speed
+
+Memory footprint: identical (787 MB RAM, ~1091-1115 MB GPU)
+Smoke test: OK, text output identical on both versions

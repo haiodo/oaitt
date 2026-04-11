@@ -1,8 +1,8 @@
 # Core dependencies for OAITT (without WhisperX)
-# PyTorch 2.10.0+ required for MPS memory leak fixes on Apple Silicon
-# See: https://github.com/pytorch/pytorch/issues/XXXX
-torch>=2.10.0
-torchaudio>=2.10.0
+# PyTorch 2.11.0+ required for MPS memory leak fixes on Apple Silicon
+# See: https://github.com/pytorch/pytorch/issues/154329
+torch>=2.11.0
+torchaudio>=2.11.0
 
 # Additional dependencies for the transcriber service
 fastapi

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/bin/python:*)",
+      "Bash(./venv/bin/pip index:*)",
+      "Bash(ls run_gigaam*.sh)"
+    ]
+  }
+}

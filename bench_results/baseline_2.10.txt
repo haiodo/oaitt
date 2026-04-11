@@ -1,0 +1,7 @@
+Torch 2.10.0 — baseline gigaam run_gigaam_asr.sh (v3_e2e_ctc)
+
+SHORT (20s x 5):
+  Avg 0.14s | Min 0.09 | Max 0.28 | Speed 144.05x | RAM 788 MB | GPU 1091 MB
+
+LONG (60s x 3):
+  Avg 0.25s | Min 0.19 | Max 0.36 | Speed 242.13x | RAM 787 MB | GPU 1115 MB

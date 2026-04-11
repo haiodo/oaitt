@@ -658,6 +658,12 @@ Examples:
         default=None,
         help="Override number of iterations"
     )
+    parser.add_argument(
+        "--script", "-s",
+        action="append",
+        default=None,
+        help="Run only engines matching script name (e.g. run_gigaam_asr.sh). Repeatable."
+    )
     return parser.parse_args()
 
 
@@ -698,9 +704,17 @@ def main():
 
     results = []
 
+    scripts = BENCHMARK_SCRIPTS
+    if args.script:
+        wanted = set(args.script)
+        scripts = [(n, s) for n, s in BENCHMARK_SCRIPTS if s in wanted]
+        if not scripts:
+            print(f"No matching scripts for: {args.script}")
+            return
+
     try:
         # Run benchmarks for each engine
-        for engine_name, script_name in BENCHMARK_SCRIPTS:
+        for engine_name, script_name in scripts:
             # Check if script exists
             script_path = PROJECT_ROOT / script_name
             if not script_path.exists():
