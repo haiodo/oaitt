@@ -26,10 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /app
 
-# Install PyTorch CPU 2.10.0 (cached layer)
+# Install PyTorch CPU 2.11.0 (cached layer)
 RUN pip install --no-cache-dir \
-    torch==2.10.0+cpu \
-    torchaudio==2.10.0 \
+    torch==2.11.0+cpu \
+    torchaudio==2.11.0 \
     --index-url https://download.pytorch.org/whl/cpu
 
 # Install ML/audio dependencies (cached layer)
