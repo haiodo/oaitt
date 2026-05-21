@@ -27,7 +27,7 @@
 #
 
 export ASR_ENGINE=gigaam_mlx
-export GIGAAM_MLX_MODEL_TYPE=${GIGAAM_MLX_MODEL_TYPE:-ctc}
+export GIGAAM_MLX_MODEL_TYPE=${GIGAAM_MLX_MODEL_TYPE:-rnnt}
 
 # Add vendor/gigaam-mlx to Python path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,4 +42,6 @@ export MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${SCRIPT_DIR}/data}"
 # - сконвертирует автоматически. Иначе скачает с HuggingFace.
 # Принудительно задать путь: GIGAAM_MLX_REPO_ID=/path/to/weights
 
-python main.py
+# cd в project root - main.py и scripts.convert_gigaam_to_mlx требуют корректного cwd
+cd "${SCRIPT_DIR}"
+exec python main.py

@@ -48,6 +48,10 @@ echo "════════════════════════�
 echo "Workers: $NUM_WORKERS"
 echo "Model type: $GIGAAM_MLX_MODEL_TYPE"
 echo "Memory limit per worker: ${WORKER_MEMORY_LIMIT_MB} MB"
+echo "Project dir: ${SCRIPT_DIR}"
+echo "Model cache: ${MODEL_CACHE_DIR}"
 echo "═══════════════════════════════════════════════════════════════"
 
-python main.py
+# cd в project root - main.py и scripts.convert_gigaam_to_mlx требуют корректного cwd
+cd "${SCRIPT_DIR}"
+exec python main.py
