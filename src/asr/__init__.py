@@ -17,6 +17,7 @@ from src.asr.base import ASRModel
 from src.asr.transformers import TransformersASR
 from src.asr.whisperx import WhisperXASR
 from src.asr.gigaam import GigaAMASR
+from src.asr.gigaam_mlx import GigaAMMLXASR
 from src.asr.factory import create_asr_model
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     "TransformersASR",
     "WhisperXASR",
     "GigaAMASR",
+    "GigaAMMLXASR",
     "create_asr_model",
 ]

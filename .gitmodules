@@ -1,3 +1,6 @@
 [submodule "vendor/gigaam"]
 	path = vendor/gigaam
 	url = https://github.com/salute-developers/GigaAM.git
+[submodule "vendor/gigaam-mlx"]
+	path = vendor/gigaam-mlx
+	url = https://github.com/aystream/gigaam-mlx.git

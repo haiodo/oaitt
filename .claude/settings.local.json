@@ -3,7 +3,10 @@
     "allow": [
       "Bash(./venv/bin/python:*)",
       "Bash(./venv/bin/pip index:*)",
-      "Bash(ls run_gigaam*.sh)"
+      "Bash(ls run_gigaam*.sh)",
+      "Bash(rtk ls *)",
+      "Bash(rtk read *)",
+      "Bash(rtk grep *)"
     ]
   }
 }

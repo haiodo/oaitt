@@ -24,6 +24,7 @@ SUPPORTED_ENGINES = {
     "transformers": "TransformersASR",
     "whisperx": "WhisperXASR",
     "gigaam": "GigaAMASR",
+    "gigaam_mlx": "GigaAMMLXASR",
 }
 
 
@@ -65,6 +66,11 @@ def create_asr_model() -> "ASRModel":
         from src.asr.gigaam import GigaAMASR
 
         return GigaAMASR()
+
+    elif engine == "gigaam_mlx":
+        from src.asr.gigaam_mlx import GigaAMMLXASR
+
+        return GigaAMMLXASR()
 
     else:
         supported = ", ".join(f"'{e}'" for e in SUPPORTED_ENGINES.keys())
@@ -123,6 +129,18 @@ def get_engine_info(engine: str | None = None) -> dict:
                 "End-to-end RNNT / CTC models",
                 "Chunk-based handling for long audio (splits audio into chunks and transcribes each chunk)",
                 "ONNX export and SSL embeddings support",
+            ],
+        },
+        "gigaam_mlx": {
+            "name": "gigaam_mlx",
+            "class": "GigaAMMLXASR",
+            "description": "GigaAM-v3 MLX port for Apple Silicon (CTC/RNNT, no PyTorch)",
+            "features": [
+                "Apple Silicon native (MLX framework)",
+                "Up to ~330x realtime (CTC), ~77x (RNNT)",
+                "Punctuated, normalized text directly",
+                "No PyTorch dependency",
+                "Silence-aware chunking (split_audio)",
             ],
         },
     }

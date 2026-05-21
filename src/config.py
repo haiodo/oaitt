@@ -49,6 +49,14 @@ GIGAAM_MAX_SHORT_AUDIO_SEC = float(os.getenv("GIGAAM_MAX_SHORT_AUDIO_SEC", "25.0
 GIGAAM_CHUNK_SEC = int(os.getenv("GIGAAM_CHUNK_SEC", "30"))
 GIGAAM_MIN_CHUNK_SEC = int(os.getenv("GIGAAM_MIN_CHUNK_SEC", "5"))
 
+# GigaAM-MLX configuration (Apple Silicon native MLX backend).
+# Model variant: "ctc" (fast, ~330x realtime) or "rnnt" (better quality, ~77x realtime).
+# Optional HF repo id override (default uses aystream/GigaAM-v3-e2e-{ctc,rnnt}-mlx).
+GIGAAM_MLX_MODEL_TYPE = os.getenv("GIGAAM_MLX_MODEL_TYPE", "ctc")
+GIGAAM_MLX_REPO_ID = os.getenv("GIGAAM_MLX_REPO_ID", "") or None
+# Max chunk size (seconds) for MLX split_audio. Default 20s matches upstream.
+GIGAAM_MLX_CHUNK_SEC = float(os.getenv("GIGAAM_MLX_CHUNK_SEC", "20.0"))
+
 # Device to use: "auto", "cuda", "cpu", "mps"
 DEVICE = os.getenv("DEVICE", "auto")
 
