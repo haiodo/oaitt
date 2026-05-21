@@ -33,8 +33,12 @@ export GIGAAM_MLX_MODEL_TYPE=${GIGAAM_MLX_MODEL_TYPE:-ctc}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH}"
 
-# Engine сам зарезолвит локальные MLX веса в data/gigaam_mlx/<type>/.
-# Если их нет, но есть PyTorch checkpoint в data/gigaam/v3_e2e_<type>.ckpt
+# Pin model cache to project's data/ - иначе ./data резолвится от cwd запуска
+# и engine может не найти локальные веса -> начнёт качать с HuggingFace.
+export MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${SCRIPT_DIR}/data}"
+
+# Engine сам зарезолвит локальные MLX веса в ${MODEL_CACHE_DIR}/gigaam_mlx/<type>/.
+# Если их нет, но есть PyTorch checkpoint в ${MODEL_CACHE_DIR}/gigaam/v3_e2e_<type>.ckpt
 # - сконвертирует автоматически. Иначе скачает с HuggingFace.
 # Принудительно задать путь: GIGAAM_MLX_REPO_ID=/path/to/weights
 

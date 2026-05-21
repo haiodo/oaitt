@@ -35,8 +35,12 @@ export WORKER_MEMORY_LIMIT_MB=${WORKER_MEMORY_LIMIT_MB:-6144}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH}"
 
-# Engine сам зарезолвит локальные MLX веса в data/gigaam_mlx/<type>/.
-# При отсутствии - авто-конвертация из data/gigaam/v3_e2e_<type>.ckpt.
+# Pin model cache to project's data/ (engine ищет data/gigaam_mlx/<type>/ внутри MODEL_CACHE_DIR).
+# Без абсолютного пути ./data резолвится от cwd запуска - может оказаться пустым.
+export MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${SCRIPT_DIR}/data}"
+
+# Engine сам зарезолвит локальные MLX веса в ${MODEL_CACHE_DIR}/gigaam_mlx/<type>/.
+# При отсутствии - авто-конвертация из ${MODEL_CACHE_DIR}/gigaam/v3_e2e_<type>.ckpt.
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "  OAITT with GigaAM-MLX - Worker Pool Mode"
