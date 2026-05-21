@@ -3,16 +3,22 @@
 # Run OAITT with GigaAM-MLX ASR and multiple workers.
 # Each worker = separate process с своей копией MLX модели (~850 MB unified memory).
 #
+# Когда MLX engine использовать сколько workers:
+#
+# - 1 worker (default): максимум throughput на 1 модели через lock-free threading
+#   (~30-65 req/s на 5s audio с 8 параллельных клиентов).
+#   GPU - shared resource, второй worker не ускорит inference, только удвоит память.
+#
+# - 2-4 workers: только если нужна изоляция (один worker рухнул - сервис жив).
+#   Каждый worker = +850 MB unified memory (модель) + ~1-2 GB activations.
+#   2 workers разумно при чувствительности к OOM/segfault. Скорость та же.
+#
+# - >4 workers: не рекомендуется для MLX. Только распыляет память.
+#
 # Usage:
-#   ./run_gigaam_mlx_with_workers.sh [NUM_WORKERS]
-#
-# Examples:
-#   ./run_gigaam_mlx_with_workers.sh         # 1 worker (default)
-#   ./run_gigaam_mlx_with_workers.sh 4       # 4 workers
-#   WORKER_MEMORY_LIMIT_MB=4096 ./run_gigaam_mlx_with_workers.sh 4
-#
-# Note: для MLX каждый worker уже использует in-process lock-free threading.
-# Так что MODEL_WORKERS=2 + 4 параллельных клиента = 2 модели x ~8 потоков GPU.
+#   ./run_gigaam_mlx_with_workers.sh         # 1 worker (рекомендовано)
+#   ./run_gigaam_mlx_with_workers.sh 2       # 2 workers (HA / изоляция падений)
+#   WORKER_MEMORY_LIMIT_MB=4096 ./run_gigaam_mlx_with_workers.sh 2
 #
 
 NUM_WORKERS=${1:-1}

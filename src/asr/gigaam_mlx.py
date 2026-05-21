@@ -43,12 +43,17 @@ logger = logging.getLogger(__name__)
 # нехватке unified memory - каждый параллельный клиент держит свои activations).
 GIGAAM_MLX_LOCK_FREE = os.environ.get("GIGAAM_MLX_LOCK_FREE", "true").lower() == "true"
 
-# Padding режим: дополняет аудио до GIGAAM_MLX_CHUNK_SEC секунд (default true).
-# MLX JIT-компилирует kernels под каждый уникальный tensor shape - без padding это
-# ведёт к высокому потреблению unified memory под warmup кеш (8 размеров = ~4 GB MPS).
-# С padding один shape → один JIT-кеш → стабильная память.
+# Padding режим: дополняет аудио до дискретных bucket'ов (default true, шаг = bucket_sec).
+# MLX JIT-компилирует kernels под каждый уникальный tensor shape - без padding каждая
+# уникальная длина чанка (a-la 5.3s, 12.7s, 19.4s) даёт новый кеш и activations.
+# В проде это ведёт к росту unified memory до 12+ GB при сотнях разных длин из VAD-split.
+# С bucket-padding кол-во уникальных shapes = chunk_sec/bucket_sec (например 20).
 # decode() получает реальный seq_len (truncates encoder output), результат корректный.
+#
+# Bucket size в секундах. 0 - паддить всегда до chunk_sec (макс память, 1 shape).
+# 1.0 - округлять вверх до целых секунд (default, 20 shapes для chunk_sec=20).
 GIGAAM_MLX_PAD_TO_FIXED = os.environ.get("GIGAAM_MLX_PAD_TO_FIXED", "true").lower() == "true"
+GIGAAM_MLX_PAD_BUCKET_SEC = float(os.environ.get("GIGAAM_MLX_PAD_BUCKET_SEC", "1.0"))
 
 
 class GigaAMMLXASR(ASRModel):
@@ -184,22 +189,38 @@ class GigaAMMLXASR(ASRModel):
 
     def _transcribe_audio(self, audio: np.ndarray) -> List[dict]:
         """Чанкует и транскрибирует аудио через MLX."""
+        import math
         import mlx.core as mx
         from gigaam_mlx.audio import compute_mel, split_audio
 
         chunks = split_audio(audio, max_chunk_sec=self.chunk_sec, sr=SAMPLE_RATE)
         results: List[dict] = []
 
-        # При padding всегда дополняем до self.chunk_sec - один JIT-кеш на все размеры.
-        pad_samples = int(self.chunk_sec * SAMPLE_RATE) if GIGAAM_MLX_PAD_TO_FIXED else None
+        # Bucket-padding: округляем длину чанка вверх до GIGAAM_MLX_PAD_BUCKET_SEC.
+        # bucket=0 -> один shape (всегда до chunk_sec); bucket=1 -> N=chunk_sec shapes.
+        max_samples = int(self.chunk_sec * SAMPLE_RATE)
+        if GIGAAM_MLX_PAD_TO_FIXED:
+            if GIGAAM_MLX_PAD_BUCKET_SEC <= 0:
+                bucket_samples = max_samples
+            else:
+                bucket_samples = int(GIGAAM_MLX_PAD_BUCKET_SEC * SAMPLE_RATE)
+        else:
+            bucket_samples = None
 
         for ch in chunks:
             chunk_audio = audio[ch["start_sample"]:ch["end_sample"]]
             real_len = len(chunk_audio)
+            padded = False
 
-            if pad_samples is not None and real_len < pad_samples:
-                # Pad audio с нулями до фиксированного размера - mel будет фикс shape.
-                chunk_audio = np.pad(chunk_audio, (0, pad_samples - real_len))
+            if bucket_samples is not None:
+                # Round up to nearest bucket boundary, cap to max_samples.
+                target = min(
+                    max_samples,
+                    int(math.ceil(real_len / bucket_samples)) * bucket_samples,
+                )
+                if real_len < target:
+                    chunk_audio = np.pad(chunk_audio, (0, target - real_len))
+                    padded = True
 
             mel = compute_mel(chunk_audio, sr=SAMPLE_RATE)
             mel_mx = mx.array(mel[np.newaxis])
@@ -208,10 +229,9 @@ class GigaAMMLXASR(ASRModel):
 
             # При padding пересчитываем seq_len из реальной длины аудио.
             # Mel: hop=160, win=320, center=False -> T_mel = (real_len - 320) // 160 + 1.
-            # Pre-encode: 2x Conv1d stride=2 padding=(k-1)//2=2 -> floor((T+1)/2) each.
-            if pad_samples is not None and real_len < pad_samples:
+            # Pre-encode: 2x Conv1d stride=2 padding=(k-1)//2=2 -> ceil(T/2) twice.
+            if padded:
                 t_mel = max(0, (real_len - 320) // 160 + 1)
-                # Two stride-2 convs with same padding -> ceil(T/2) twice
                 t_after = (t_mel + 1) // 2
                 t_after = (t_after + 1) // 2
                 real_seq_len = max(1, t_after)
