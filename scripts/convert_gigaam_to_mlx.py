@@ -18,26 +18,36 @@ Licensed under MIT License.
 """
 
 import argparse
+import logging
 import os
 import shutil
 import sys
 
-# Project root
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-GIGAAM_CACHE = os.path.join(ROOT, "data", "gigaam")
-MLX_OUTPUT_ROOT = os.path.join(ROOT, "data", "gigaam_mlx")
+# Project root (when run as a script)
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(_THIS_DIR, ".."))
+DEFAULT_GIGAAM_CACHE = os.path.join(ROOT, "data", "gigaam")
+DEFAULT_MLX_OUTPUT_ROOT = os.path.join(ROOT, "data", "gigaam_mlx")
 
-# Make both submodules importable
+# Make both submodules importable when running as a script
 sys.path.insert(0, os.path.join(ROOT, "vendor", "gigaam"))
 sys.path.insert(0, os.path.join(ROOT, "vendor", "gigaam-mlx"))
 
+logger = logging.getLogger(__name__)
 
-def convert_one(model_type: str) -> str:
+
+def convert_one(
+    model_type: str,
+    gigaam_cache: str = DEFAULT_GIGAAM_CACHE,
+    output_root: str = DEFAULT_MLX_OUTPUT_ROOT,
+) -> str:
     """
-    Конвертирует одну модель (ctc или rnnt).
+    Конвертирует одну модель (ctc или rnnt) из PyTorch GigaAM в MLX safetensors.
 
     Args:
         model_type: "ctc" или "rnnt"
+        gigaam_cache: каталог с .ckpt файлами (data/gigaam/)
+        output_root: корень выходных каталогов (data/gigaam_mlx/)
 
     Returns:
         Путь к директории с MLX весами.
@@ -46,7 +56,7 @@ def convert_one(model_type: str) -> str:
         raise ValueError(f"model_type must be ctc|rnnt, got {model_type!r}")
 
     gigaam_name = f"v3_e2e_{model_type}"
-    out_dir = os.path.join(MLX_OUTPUT_ROOT, model_type)
+    out_dir = os.path.join(output_root, model_type)
     os.makedirs(out_dir, exist_ok=True)
 
     # SSL certs (matches upstream behavior)
@@ -68,22 +78,22 @@ def convert_one(model_type: str) -> str:
         convert_rnnt_head,
     )
 
-    print(f"Loading PyTorch GigaAM {gigaam_name} from {GIGAAM_CACHE}...")
-    if not os.path.isdir(GIGAAM_CACHE):
+    logger.info(f"Loading PyTorch GigaAM {gigaam_name} from {gigaam_cache}...")
+    if not os.path.isdir(gigaam_cache):
         raise FileNotFoundError(
-            f"Local cache {GIGAAM_CACHE} not found. "
+            f"Local cache {gigaam_cache} not found. "
             "Run ./run_gigaam_asr.sh once to download weights."
         )
 
-    pt_model = gigaam.load_model(gigaam_name, download_root=GIGAAM_CACHE)
+    pt_model = gigaam.load_model(gigaam_name, download_root=gigaam_cache)
     pt_state = {k: v for k, v in pt_model.named_parameters()}
     for k, v in pt_model.named_buffers():
         pt_state[k] = v
 
-    print("Converting encoder weights...")
+    logger.info("Converting encoder weights...")
     weights = convert_encoder(pt_state)
 
-    print(f"Converting {model_type} head weights...")
+    logger.info(f"Converting {model_type} head weights...")
     if model_type == "ctc":
         weights.update(convert_ctc_head(pt_state))
     else:
@@ -92,19 +102,19 @@ def convert_one(model_type: str) -> str:
     mlx_weights = {k: mx.array(v) for k, v in weights.items()}
 
     weights_path = os.path.join(out_dir, "weights.safetensors")
-    print(f"Saving weights -> {weights_path}")
+    logger.info(f"Saving weights -> {weights_path}")
     mx.save_safetensors(weights_path, mlx_weights)
 
-    tokenizer_src = os.path.join(GIGAAM_CACHE, f"{gigaam_name}_tokenizer.model")
+    tokenizer_src = os.path.join(gigaam_cache, f"{gigaam_name}_tokenizer.model")
     tokenizer_dst = os.path.join(out_dir, "tokenizer.model")
     if os.path.exists(tokenizer_src):
         shutil.copy2(tokenizer_src, tokenizer_dst)
-        print(f"Copied tokenizer -> {tokenizer_dst}")
+        logger.info(f"Copied tokenizer -> {tokenizer_dst}")
     else:
-        print(f"WARNING: tokenizer not found at {tokenizer_src}")
+        logger.warning(f"tokenizer not found at {tokenizer_src}")
 
     total = sum(v.size for v in mlx_weights.values())
-    print(f"Done. {len(mlx_weights)} tensors, {total:,} parameters -> {out_dir}")
+    logger.info(f"Done. {len(mlx_weights)} tensors, {total:,} parameters -> {out_dir}")
 
     # Free PyTorch model
     del pt_model
@@ -116,6 +126,7 @@ def convert_one(model_type: str) -> str:
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         description="Convert local GigaAM PyTorch weights to MLX format"
     )
@@ -130,13 +141,13 @@ def main():
     targets = ["ctc", "rnnt"] if args.model == "both" else [args.model]
 
     for t in targets:
-        print(f"\n=== Converting {t} ===")
+        logger.info(f"\n=== Converting {t} ===")
         out = convert_one(t)
-        print(f"OK: {out}")
+        logger.info(f"OK: {out}")
 
-    print("\nTo use locally converted weights, set:")
+    logger.info("\nTo use locally converted weights, set:")
     for t in targets:
-        print(f"  GIGAAM_MLX_REPO_ID={os.path.join(MLX_OUTPUT_ROOT, t)} ./run_gigaam_mlx_asr.sh")
+        logger.info(f"  GIGAAM_MLX_REPO_ID={os.path.join(DEFAULT_MLX_OUTPUT_ROOT, t)} ./run_gigaam_mlx_asr.sh")
 
 
 if __name__ == "__main__":

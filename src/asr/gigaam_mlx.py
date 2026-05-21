@@ -66,6 +66,45 @@ class GigaAMMLXASR(ASRModel):
         self.repo_id = GIGAAM_MLX_REPO_ID
         self.chunk_sec = GIGAAM_MLX_CHUNK_SEC
 
+    def _resolve_local_weights(self) -> Optional[str]:
+        """
+        Возвращает путь к локально сконвертированным MLX весам, если они
+        существуют либо могут быть автоматически сконвертированы из data/gigaam/.
+        Иначе None - тогда gigaam_mlx скачает с HuggingFace.
+        """
+        if not MODEL_CACHE_DIR:
+            return None
+
+        mlx_dir = os.path.join(MODEL_CACHE_DIR, "gigaam_mlx", self.model_type)
+        weights_path = os.path.join(mlx_dir, "weights.safetensors")
+        tokenizer_path = os.path.join(mlx_dir, "tokenizer.model")
+        if os.path.isfile(weights_path) and os.path.isfile(tokenizer_path):
+            logger.info(f"Using locally converted MLX weights: {mlx_dir}")
+            return mlx_dir
+
+        # Не сконвертированы. Проверим, есть ли PyTorch чекпоинт от gigaam engine.
+        pt_cache = os.path.join(MODEL_CACHE_DIR, "gigaam")
+        pt_ckpt = os.path.join(pt_cache, f"v3_e2e_{self.model_type}.ckpt")
+        if not os.path.isfile(pt_ckpt):
+            return None
+
+        logger.info(
+            f"PyTorch GigaAM checkpoint found at {pt_ckpt} but MLX weights missing. "
+            f"Auto-converting to {mlx_dir}..."
+        )
+        try:
+            from scripts.convert_gigaam_to_mlx import convert_one
+            return convert_one(
+                self.model_type,
+                gigaam_cache=pt_cache,
+                output_root=os.path.join(MODEL_CACHE_DIR, "gigaam_mlx"),
+            )
+        except Exception as e:
+            logger.warning(
+                f"Auto-conversion failed ({e}); will fall back to HuggingFace download"
+            )
+            return None
+
     def load_model(self) -> None:
         """Загружает MLX модель и tokenizer."""
         try:
@@ -76,15 +115,18 @@ class GigaAMMLXASR(ASRModel):
                 os.environ["HF_HOME"] = cache_dir
                 logger.info(f"GigaAM-MLX cache directory: {cache_dir}")
 
+            # Resolve repo_id: explicit env > locally converted > HF download
+            effective_repo = self.repo_id or self._resolve_local_weights()
+
             from gigaam_mlx import load_model as mlx_load_model
 
             logger.info(
                 f"Loading GigaAM-MLX model: type={self.model_type}, "
-                f"repo_id={self.repo_id or 'default'}"
+                f"repo_id={effective_repo or 'HF default'}"
             )
             self.model, self.tokenizer = mlx_load_model(
                 model_type=self.model_type,
-                repo_id=self.repo_id,
+                repo_id=effective_repo,
             )
             logger.info(
                 f"GigaAM-MLX model '{self.model_type}' loaded successfully "

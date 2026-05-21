@@ -29,12 +29,8 @@ export WORKER_MEMORY_LIMIT_MB=${WORKER_MEMORY_LIMIT_MB:-6144}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH}"
 
-# Auto-detect locally converted weights
-LOCAL_MLX_DIR="${SCRIPT_DIR}/data/gigaam_mlx/${GIGAAM_MLX_MODEL_TYPE}"
-if [ -z "${GIGAAM_MLX_REPO_ID}" ] && [ -f "${LOCAL_MLX_DIR}/weights.safetensors" ]; then
-    export GIGAAM_MLX_REPO_ID="${LOCAL_MLX_DIR}"
-    echo "Using locally converted MLX weights: ${LOCAL_MLX_DIR}"
-fi
+# Engine сам зарезолвит локальные MLX веса в data/gigaam_mlx/<type>/.
+# При отсутствии - авто-конвертация из data/gigaam/v3_e2e_<type>.ckpt.
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "  OAITT with GigaAM-MLX - Worker Pool Mode"

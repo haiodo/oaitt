@@ -33,12 +33,9 @@ export GIGAAM_MLX_MODEL_TYPE=${GIGAAM_MLX_MODEL_TYPE:-ctc}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH}"
 
-# Auto-detect locally converted weights (data/gigaam_mlx/{ctc,rnnt}/)
-# Convert via: python scripts/convert_gigaam_to_mlx.py --model {ctc,rnnt,both}
-LOCAL_MLX_DIR="${SCRIPT_DIR}/data/gigaam_mlx/${GIGAAM_MLX_MODEL_TYPE}"
-if [ -z "${GIGAAM_MLX_REPO_ID}" ] && [ -f "${LOCAL_MLX_DIR}/weights.safetensors" ]; then
-    export GIGAAM_MLX_REPO_ID="${LOCAL_MLX_DIR}"
-    echo "Using locally converted MLX weights: ${LOCAL_MLX_DIR}"
-fi
+# Engine сам зарезолвит локальные MLX веса в data/gigaam_mlx/<type>/.
+# Если их нет, но есть PyTorch checkpoint в data/gigaam/v3_e2e_<type>.ckpt
+# - сконвертирует автоматически. Иначе скачает с HuggingFace.
+# Принудительно задать путь: GIGAAM_MLX_REPO_ID=/path/to/weights
 
 python main.py
