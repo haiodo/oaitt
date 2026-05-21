@@ -44,9 +44,10 @@ logs/
 *.log
 
 # Data and outputs (will be mounted as volumes)
-# BUT keep data/gigaam for model weights
+# BUT keep data/gigaam (PyTorch) and data/gigaam_mlx (MLX) for model weights
 data/*
 !data/gigaam/
+!data/gigaam_mlx/
 private_output/
 samples/
 tmp/
@@ -60,9 +61,9 @@ docs/
 *.md
 !readme.md
 
-# Scripts (not needed in image)
-scripts/
+# Scripts (kept - gigaam_mlx engine imports scripts.convert_gigaam_to_mlx for auto-convert)
 *.sh
+!scripts/
 
 # OS
 .DS_Store

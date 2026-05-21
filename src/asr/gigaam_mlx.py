@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 # нехватке unified memory - каждый параллельный клиент держит свои activations).
 GIGAAM_MLX_LOCK_FREE = os.environ.get("GIGAAM_MLX_LOCK_FREE", "true").lower() == "true"
 
+# Padding режим: дополняет аудио до GIGAAM_MLX_CHUNK_SEC секунд (default true).
+# MLX JIT-компилирует kernels под каждый уникальный tensor shape - без padding это
+# ведёт к высокому потреблению unified memory под warmup кеш (8 размеров = ~4 GB MPS).
+# С padding один shape → один JIT-кеш → стабильная память.
+# decode() получает реальный seq_len (truncates encoder output), результат корректный.
+GIGAAM_MLX_PAD_TO_FIXED = os.environ.get("GIGAAM_MLX_PAD_TO_FIXED", "true").lower() == "true"
+
 
 class GigaAMMLXASR(ASRModel):
     """
@@ -183,12 +190,33 @@ class GigaAMMLXASR(ASRModel):
         chunks = split_audio(audio, max_chunk_sec=self.chunk_sec, sr=SAMPLE_RATE)
         results: List[dict] = []
 
+        # При padding всегда дополняем до self.chunk_sec - один JIT-кеш на все размеры.
+        pad_samples = int(self.chunk_sec * SAMPLE_RATE) if GIGAAM_MLX_PAD_TO_FIXED else None
+
         for ch in chunks:
             chunk_audio = audio[ch["start_sample"]:ch["end_sample"]]
+            real_len = len(chunk_audio)
+
+            if pad_samples is not None and real_len < pad_samples:
+                # Pad audio с нулями до фиксированного размера - mel будет фикс shape.
+                chunk_audio = np.pad(chunk_audio, (0, pad_samples - real_len))
+
             mel = compute_mel(chunk_audio, sr=SAMPLE_RATE)
             mel_mx = mx.array(mel[np.newaxis])
 
             encoded, seq_len = self.model.encode(mel_mx)
+
+            # При padding пересчитываем seq_len из реальной длины аудио.
+            # Mel: hop=160, win=320, center=False -> T_mel = (real_len - 320) // 160 + 1.
+            # Pre-encode: 2x Conv1d stride=2 padding=(k-1)//2=2 -> floor((T+1)/2) each.
+            if pad_samples is not None and real_len < pad_samples:
+                t_mel = max(0, (real_len - 320) // 160 + 1)
+                # Two stride-2 convs with same padding -> ceil(T/2) twice
+                t_after = (t_mel + 1) // 2
+                t_after = (t_after + 1) // 2
+                real_seq_len = max(1, t_after)
+                seq_len = min(seq_len, real_seq_len)
+
             mx.eval(encoded)
             token_ids = self.model.decode(encoded, seq_len)
             text = self.tokenizer.decode(token_ids).strip()

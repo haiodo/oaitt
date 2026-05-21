@@ -42,9 +42,13 @@ def setup_torch_serialization():
     import collections
     import typing
 
-    import torch
-    import omegaconf
-    import pyannote.audio
+    try:
+        import torch
+        import omegaconf
+        import pyannote.audio
+    except ImportError as e:
+        logger.info(f"torch/pyannote not installed, skipping torch serialization setup: {e}")
+        return
 
     # Add safe globals for torch.load
     safe_globals = [

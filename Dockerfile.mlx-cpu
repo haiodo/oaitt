@@ -1,0 +1,77 @@
+# Dockerfile for OAITT with GigaAM-MLX engine (CPU mode, Linux).
+# Использует mlx[cpu] (BLAS/LAPACK) вместо PyTorch.
+# Pre-converted MLX weights копируются из data/gigaam_mlx/.
+#
+# Build:
+#   docker build -f Dockerfile.mlx-cpu -t oaitt-gigaam-mlx:cpu .
+# Run:
+#   docker run -p 9007:9007 -v ./data:/app/data oaitt-gigaam-mlx:cpu
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEVICE=cpu \
+    ASR_ENGINE=gigaam_mlx \
+    GIGAAM_MLX_MODEL_TYPE=rnnt \
+    MODEL_CACHE_DIR=/app/data \
+    HF_HOME=/app/data \
+    PYTHONPATH=/app/vendor/gigaam-mlx
+
+# System deps:
+# - ffmpeg: audio loading via subprocess
+# - libsndfile1: librosa
+# - g++/build-essential: mlx[cpu] JIT-компилирует kernels через g++ при первом запросе
+# - libopenblas0: BLAS backend для MLX CPU
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    libgomp1 \
+    libopenblas0 \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# MLX CPU build (Linux x86_64/arm64).
+RUN pip install --no-cache-dir "mlx[cpu]>=0.20.0"
+
+# Audio + ML lite stack (no PyTorch).
+RUN pip install --no-cache-dir \
+    numpy \
+    scipy \
+    soundfile \
+    librosa \
+    sentencepiece \
+    huggingface_hub
+
+# Web framework.
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    pydantic \
+    python-multipart \
+    psutil
+
+# Copy MLX submodule (no install needed; PYTHONPATH covers it).
+COPY vendor/gigaam-mlx /app/vendor/gigaam-mlx
+
+# Pre-converted MLX weights (built locally on macOS, no torch needed at runtime).
+# Falls back to HuggingFace if missing.
+COPY data/gigaam_mlx/ /app/data/gigaam_mlx/
+
+# App code.
+COPY src/ /app/src/
+COPY scripts/ /app/scripts/
+COPY main.py /app/
+
+RUN mkdir -p /app/data && chmod -R 755 /app/data
+
+EXPOSE 9007
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9007/health')" || exit 1
+
+CMD ["python", "main.py"]

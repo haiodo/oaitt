@@ -16,7 +16,13 @@ import tracemalloc
 from typing import Optional
 
 import psutil
-import torch
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    TORCH_AVAILABLE = False
 
 from src.config import (
     MEMORY_LOG_INTERVAL,
@@ -159,6 +165,8 @@ class MemoryMonitor:
         Returns:
             Строка с информацией о памяти GPU или None.
         """
+        if not TORCH_AVAILABLE:
+            return None
         try:
             if torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated() / (1024 * 1024)

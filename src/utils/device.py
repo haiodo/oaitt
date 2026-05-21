@@ -12,9 +12,14 @@ Licensed under MIT License.
 import gc
 import logging
 import os
-from typing import Optional
+from typing import Optional, Any
 
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    TORCH_AVAILABLE = False
 
 try:
     import psutil
@@ -27,7 +32,7 @@ from src.config import DEVICE
 logger = logging.getLogger(__name__)
 
 
-def get_device() -> torch.device:
+def get_device() -> Any:
     """
     Определяет лучшее доступное устройство для инференса.
 
@@ -37,8 +42,12 @@ def get_device() -> torch.device:
     3. CPU
 
     Returns:
-        torch.device: Выбранное устройство для вычислений.
+        torch.device или строка "cpu" если torch недоступен.
     """
+    if not TORCH_AVAILABLE:
+        logger.info("torch unavailable, returning 'cpu' string")
+        return "cpu"
+
     if DEVICE != "auto":
         device = DEVICE
     elif torch.cuda.is_available():
@@ -54,7 +63,7 @@ def get_device() -> torch.device:
     return torch.device(device)
 
 
-def is_mps_device(device: torch.device) -> bool:
+def is_mps_device(device: Any) -> bool:
     """
     Проверяет, является ли устройство MPS (Apple Silicon).
 
@@ -64,10 +73,12 @@ def is_mps_device(device: torch.device) -> bool:
     Returns:
         True если устройство MPS, иначе False.
     """
+    if not TORCH_AVAILABLE or isinstance(device, str):
+        return False
     return device.type == "mps"
 
 
-def is_cuda_device(device: torch.device) -> bool:
+def is_cuda_device(device: Any) -> bool:
     """
     Проверяет, является ли устройство CUDA (NVIDIA GPU).
 
@@ -77,6 +88,8 @@ def is_cuda_device(device: torch.device) -> bool:
     Returns:
         True если устройство CUDA, иначе False.
     """
+    if not TORCH_AVAILABLE or isinstance(device, str):
+        return False
     return device.type == "cuda"
 
 
@@ -86,6 +99,9 @@ def clear_memory_cache() -> None:
 
     Вызывает соответствующую функцию очистки для CUDA или MPS.
     """
+    if not TORCH_AVAILABLE:
+        return
+
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
@@ -108,6 +124,14 @@ def get_device_info() -> dict:
     Returns:
         Словарь с информацией о доступных устройствах.
     """
+    if not TORCH_AVAILABLE:
+        return {
+            "cuda_available": False,
+            "mps_available": False,
+            "device_configured": DEVICE,
+            "torch_available": False,
+        }
+
     info = {
         "cuda_available": torch.cuda.is_available(),
         "mps_available": torch.backends.mps.is_available(),
@@ -152,6 +176,9 @@ def get_gpu_memory_mb() -> Optional[float]:
     Returns:
         Использование памяти GPU в МБ, или None если GPU недоступен.
     """
+    if not TORCH_AVAILABLE:
+        return None
+
     if torch.cuda.is_available():
         try:
             return torch.cuda.memory_allocated() / (1024 * 1024)
@@ -192,7 +219,7 @@ def get_memory_info() -> dict:
         info["gpu_memory_mb"] = round(gpu_mem, 1)
 
     # CUDA reserved memory
-    if torch.cuda.is_available():
+    if TORCH_AVAILABLE and torch.cuda.is_available():
         try:
             info["gpu_memory_reserved_mb"] = round(
                 torch.cuda.memory_reserved() / (1024 * 1024), 1

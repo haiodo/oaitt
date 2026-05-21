@@ -1,0 +1,33 @@
+services:
+  oaitt-mlx-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlx-cpu
+    container_name: oaitt-gigaam-mlx-cpu
+    ports:
+      - "9008:9007"
+    environment:
+      - DEVICE=cpu
+      - ASR_ENGINE=gigaam_mlx
+      - GIGAAM_MLX_MODEL_TYPE=rnnt
+      - GIGAAM_MLX_LOCK_FREE=true
+      - MODEL_CACHE_DIR=/app/data
+      - MODEL_WORKERS=1
+      - HOST=0.0.0.0
+      - PORT=9007
+      - MEMORY_LOG_ENABLED=false
+    volumes:
+      - ./data:/app/data
+      - ./samples:/app/samples:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9007/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
