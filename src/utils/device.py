@@ -27,6 +27,13 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
 
+try:
+    import mlx.core as mx
+    MLX_AVAILABLE = True
+except ImportError:
+    mx = None  # type: ignore
+    MLX_AVAILABLE = False
+
 from src.config import DEVICE
 
 logger = logging.getLogger(__name__)
@@ -170,12 +177,28 @@ def get_gpu_memory_mb() -> Optional[float]:
     """
     Возвращает использование памяти GPU в МБ.
 
+    Для MLX возвращает active memory собственного аллокатора MLX.
     Для CUDA возвращает allocated memory.
     Для MPS возвращает allocated memory (если доступно).
 
     Returns:
         Использование памяти GPU в МБ, или None если GPU недоступен.
     """
+    # MLX держит буферы в своём аллокаторе. torch.mps.driver_allocated_memory()
+    # видит их как часть unified memory процесса, но вместе с torch-буферами -
+    # для MLX-движка спрашиваем MLX напрямую.
+    # active - буферы, живые прямо сейчас (веса + текущие активации).
+    # Кэш аллокатора сюда не входит намеренно: это переиспользуемые свободные
+    # буферы, они не отражаются в RSS и растут до cache_limit независимо от
+    # реального потребления. Пик см. в gpu_memory_peak_mb.
+    if MLX_AVAILABLE:
+        try:
+            active = mx.get_active_memory() / (1024 * 1024)
+            if active > 0:
+                return active
+        except Exception as e:
+            logger.debug(f"MLX memory query failed: {e}")
+
     if not TORCH_AVAILABLE:
         return None
 
@@ -218,11 +241,26 @@ def get_memory_info() -> dict:
     if gpu_mem is not None:
         info["gpu_memory_mb"] = round(gpu_mem, 1)
 
+    # Peak GPU memory - для планирования RAM пиковое значение важнее текущего.
+    if MLX_AVAILABLE:
+        try:
+            peak = mx.get_peak_memory()
+            if peak > 0:
+                info["gpu_memory_peak_mb"] = round(peak / (1024 * 1024), 1)
+                info["gpu_memory_cache_mb"] = round(
+                    mx.get_cache_memory() / (1024 * 1024), 1
+                )
+        except Exception:
+            pass
+
     # CUDA reserved memory
     if TORCH_AVAILABLE and torch.cuda.is_available():
         try:
             info["gpu_memory_reserved_mb"] = round(
                 torch.cuda.memory_reserved() / (1024 * 1024), 1
+            )
+            info["gpu_memory_peak_mb"] = round(
+                torch.cuda.max_memory_allocated() / (1024 * 1024), 1
             )
         except Exception:
             pass

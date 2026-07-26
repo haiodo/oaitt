@@ -6,7 +6,8 @@
       "Bash(ls run_gigaam*.sh)",
       "Bash(rtk ls *)",
       "Bash(rtk read *)",
-      "Bash(rtk grep *)"
+      "Bash(rtk grep *)",
+      "Bash(HF_HOME=data venv/bin/python -u -c ' *)"
     ]
   }
 }

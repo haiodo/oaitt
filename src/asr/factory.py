@@ -25,6 +25,7 @@ SUPPORTED_ENGINES = {
     "whisperx": "WhisperXASR",
     "gigaam": "GigaAMASR",
     "gigaam_mlx": "GigaAMMLXASR",
+    "gigaam_multilingual_mlx": "GigaAMMultilingualMLXASR",
 }
 
 
@@ -71,6 +72,11 @@ def create_asr_model() -> "ASRModel":
         from src.asr.gigaam_mlx import GigaAMMLXASR
 
         return GigaAMMLXASR()
+
+    elif engine == "gigaam_multilingual_mlx":
+        from src.asr.gigaam_multilingual_mlx import GigaAMMultilingualMLXASR
+
+        return GigaAMMultilingualMLXASR()
 
     else:
         supported = ", ".join(f"'{e}'" for e in SUPPORTED_ENGINES.keys())
@@ -141,6 +147,20 @@ def get_engine_info(engine: str | None = None) -> dict:
                 "Punctuated, normalized text directly",
                 "No PyTorch dependency",
                 "Silence-aware chunking (split_audio)",
+            ],
+        },
+        "gigaam_multilingual_mlx": {
+            "name": "gigaam_multilingual_mlx",
+            "class": "GigaAMMultilingualMLXASR",
+            "description": (
+                "GigaAM-Multilingual (600M charwise CTC) MLX port for Apple Silicon"
+            ),
+            "features": [
+                "Apple Silicon native (MLX framework)",
+                "~210-230x realtime",
+                "70+ languages; best WER on Russian, Kazakh, Kyrgyz, Uzbek",
+                "No punctuation (charwise CTC)",
+                "int8 / fp16 weight variants",
             ],
         },
     }

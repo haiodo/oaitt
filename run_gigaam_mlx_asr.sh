@@ -26,12 +26,18 @@
 #   MODEL_WORKERS=N                  - parallel model instances (default: 1)
 #
 
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+source "${PROJECT_ROOT}/scripts/venv_guard.sh"
+require_venv venv ./prepare-gigaam.sh mlx.core
+
 export ASR_ENGINE=gigaam_mlx
 export GIGAAM_MLX_MODEL_TYPE=${GIGAAM_MLX_MODEL_TYPE:-rnnt}
 
 # Add vendor/gigaam-mlx to Python path
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH}"
+export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam-mlx:${PYTHONPATH:-}"
 
 # Pin model cache to project's data/ - иначе ./data резолвится от cwd запуска
 # и engine может не найти локальные веса -> начнёт качать с HuggingFace.
@@ -44,4 +50,4 @@ export MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${SCRIPT_DIR}/data}"
 
 # cd в project root - main.py и scripts.convert_gigaam_to_mlx требуют корректного cwd
 cd "${SCRIPT_DIR}"
-exec python main.py
+exec "$PYTHON" main.py

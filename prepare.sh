@@ -29,8 +29,13 @@ fi
 mkdir -p "$GIGAAM_DIR"
 
 # Check if models already exist
+REQUIRED_MODELS=("v3_e2e_rnnt" "v3_e2e_ctc")
+if [[ "${GIGAAM_MULTILINGUAL:-}" =~ ^(1|true|yes)$ ]]; then
+    REQUIRED_MODELS+=("multilingual_ctc" "multilingual_large_ctc")
+fi
+
 MODELS_EXIST=true
-for model in "v3_e2e_rnnt" "v3_e2e_ctc"; do
+for model in "${REQUIRED_MODELS[@]}"; do
     if [[ ! -f "${GIGAAM_DIR}/${model}.ckpt" ]]; then
         MODELS_EXIST=false
         break
@@ -46,9 +51,14 @@ fi
 echo -e "${YELLOW}Downloading GigaAM models...${NC}"
 echo "This may take a while (approx 900MB)..."
 
-# Download using Python
+# Download using Python from the project venv (gigaam deps live there, not in system python)
 cd "$SCRIPT_DIR"
-python3 << 'EOF'
+PYTHON="${SCRIPT_DIR}/venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    echo -e "${RED}venv not found at ${SCRIPT_DIR}/venv - run ./prepare-gigaam.sh${NC}"
+    exit 1
+fi
+"$PYTHON" << 'EOF'
 import os
 import sys
 
@@ -61,8 +71,11 @@ try:
     download_root = "data/gigaam"
     os.makedirs(download_root, exist_ok=True)
     
-    # Download models
+    # Download models. multilingual_* are only fetched when explicitly requested -
+    # the large one alone is ~2.4GB and most setups only need the v3 line.
     models = ["v3_e2e_rnnt", "v3_e2e_ctc"]
+    if os.getenv("GIGAAM_MULTILINGUAL", "").lower() in ("1", "true", "yes"):
+        models += ["multilingual_ctc", "multilingual_large_ctc"]
     
     for model_name in models:
         print(f"\nDownloading {model_name}...")

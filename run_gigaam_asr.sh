@@ -25,11 +25,17 @@
 #   MEMORY_LOG_ENABLED=true MEMORY_LOG_INTERVAL=30 ./run_gigaam_asr.sh
 #
 
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${PROJECT_ROOT}/scripts/venv_guard.sh"
+require_venv venv ./prepare-gigaam.sh torch
+
 export ASR_ENGINE=gigaam
 export GIGAAM_MODEL=${GIGAAM_MODEL:-v3_e2e_ctc}
 
 # Add vendor/gigaam to Python path
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="${SCRIPT_DIR}/vendor/gigaam:${PYTHONPATH}"
+export PYTHONPATH="${PROJECT_ROOT}/vendor/gigaam:${PYTHONPATH:-}"
 
-python main.py
+cd "$PROJECT_ROOT"
+exec "$PYTHON" main.py

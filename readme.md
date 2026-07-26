@@ -1,4 +1,4 @@
-# 🎙️ OAITT — Open AI Transformer Transcriber
+# OAITT — Open AI Transformer Transcriber
 
 **Высокопроизводительный сервис распознавания речи с поддержкой Whisper и GigaAM**
 
@@ -6,20 +6,21 @@ OAITT — это speech-to-text сервис транскрипции с под�
 
 ---
 
-## ✨ Возможности
+## Возможности
 
-- 🚀 **Четыре ASR движка**: Hugging Face Transformers, WhisperX, GigaAM (via HF) и GigaAM Native
-- 🔌 **OpenAI-совместимый API**: Drop-in замена для OpenAI Whisper API
-- ⏱️ **Точные временные метки**: На уровне слов (с WhisperX)
-- 📊 **Метрики уверенности**: Оценка качества транскрипции
-- ⏰ **Адаптивные таймауты**: Защита от зависания модели
-- 🍎 **Apple Silicon**: Поддержка MPS для Mac
-- 📝 **Множество форматов**: JSON, текст, SRT, VTT, TSV
-- ⚡ **Высокая производительность**: До 150x realtime с GigaAM Native на Apple Silicon
+- **Шесть ASR движков**: GigaAM Native, GigaAM MLX, GigaAM Multilingual MLX (Apple Silicon), GigaAM via HF, Hugging Face Transformers и WhisperX
+- **70+ языков**: GigaAM Multilingual - лучший WER на русском, казахском, киргизском, узбекском
+- **OpenAI-совместимый API**: Drop-in замена для OpenAI Whisper API
+- **Точные временные метки**: На уровне слов (с WhisperX)
+- **Метрики уверенности**: Оценка качества транскрипции
+- **Адаптивные таймауты**: Защита от зависания модели
+- **Apple Silicon**: Поддержка MPS для Mac
+- **Множество форматов**: JSON, текст, SRT, VTT, TSV
+- **Высокая производительность**: До 327x realtime с GigaAM Native на Apple Silicon
 
 ---
 
-## 📈 Производительность
+## Производительность
 
 ### Тестовая конфигурация
 
@@ -32,28 +33,56 @@ OAITT — это speech-to-text сервис транскрипции с под�
 
 ### Результаты бенчмарка
 
-Тестовое аудио: **137.4 секунд**, режим: full, 5 итераций:
+Тестовое аудио: **137.4 секунд**, режим: full. На каждый движок — прогрев (в замер не идёт),
+затем итерации до заполнения бюджета в 60 секунд, но не более 60 прогонов.
 
-| Движок | Avg (s) | Min (s) | Max (s) | Скорость | RAM | GPU | Статус |
+| Движок | Avg (s) | Min (s) | Max (s) | Скорость | RSS | GPU | Пункт. |
 |--------|---------|---------|---------|----------|-----|-----|--------|
-| **GigaAM (Native)** | **0.51** | 0.45 | 0.71 | **270.56x** | 779 MB | 4.5 GB | ✓ OK |
-| GigaAM (Transformers) | 1.20 | 1.12 | 1.46 | 114.61x | 465 MB | 1.5 GB | ✓ OK |
-| Whisper Large V3 (Transformers) | 16.70 | 14.55 | 21.31 | 8.23x | 105 MB | 9.5 GB | ✓ OK |
-| WhisperX Large V3 | 36.44 | 35.22 | 39.60 | 3.77x | 6.8 GB | — | ✓ OK |
+| **GigaAM Native (CTC)** | **0.43** | 0.42 | 0.48 | **320.07x** | 1445 MB | 1116 MB | да |
+| GigaAM Multilingual (CTC) | 0.61 | 0.45 | 0.76 | 226.08x | 682 MB | 1116 MB | нет |
+| GigaAM MLX (CTC) | 0.72 | 0.63 | 1.01 | 191.05x | 1525 MB | 843 MB | да |
+| GigaAM Multilingual Large MLX (int8) | 0.78 | 0.58 | 0.93 | 176.54x | 1274 MB | 666 MB | нет |
+| GigaAM Multilingual Large MLX (fp16) | 0.82 | 0.58 | 1.16 | 167.50x | 1710 MB | 1116 MB | нет |
+| GigaAM Multilingual Large (CTC) | 1.13 | 0.74 | 1.54 | 121.77x | 303 MB | 3232 MB | нет |
+| GigaAM MLX (RNNT) | 1.47 | 1.42 | 1.57 | 93.37x | 1519 MB | 849 MB | да |
+| GigaAM Native (RNNT) | 3.31 | 3.12 | 3.45 | 41.45x | 1586 MB | 1116 MB | да |
 
-> 💡 **GigaAM Native — самый быстрый вариант** для русского языка (270x realtime), использует прямую передачу тензоров без временных файлов.
-> 
-> 📊 **RAM** — память процесса (модель), **GPU** — память на GPU/MPS (unified memory на Apple Silicon). WhisperX использует CPU, поэтому вся модель в RAM.
+Воспроизвести: `./benchmark.sh` — прогонит все движки и откроет HTML-отчёт.
+
+> **GigaAM Native (CTC) — самый быстрый вариант** для русского языка (320x realtime),
+> использует прямую передачу тензоров без временных файлов.
+>
+> **MLX даёт заметный выигрыш на больших моделях.** Multilingual Large (600M) в MLX — 177x
+> против 122x у PyTorch-версии той же модели. На v3 (240M) картина обратная: PyTorch-CTC
+> быстрее MLX-CTC (320x против 191x), а вот RNNT в MLX вдвое быстрее (93x против 41x).
+>
+> **RSS** — память процесса по данным `/health`, **GPU** — unified memory,
+> **Пункт.** — модель проставляет пунктуацию (charwise CTC этого не делают).
+>
+> Замер на одном файле. В проде MLX-движки держат больше: кэш аллокатора растёт с числом
+> уникальных длин чанков после VAD-split, а в lock-free режиме каждый параллельный клиент
+> держит свои активации. RSS у PyTorch-multilingual занижен — `/health` опрашивается после
+> прогона, когда часть страниц уже вытеснена.
+
+**Не в наборе по умолчанию:**
+
+| Движок | Причина |
+|--------|---------|
+| GigaAM (Transformers) | Кастомный код `ai-sage/GigaAM-v3` несовместим с transformers 5.x (`.item()` на meta-тензоре). Используйте native — та же модель |
+| Whisper Large V3 | ~9.5x realtime, на порядок медленнее GigaAM при сопоставимом качестве на русском |
+| WhisperX Large V3 | Зависает на длинном аудио (сервер стартует, запрос не возвращается) |
+
+Запустить явно: `./benchmark.sh -s run_whisper_large_v3.sh`
 
 ---
 
-## 🐳 Docker
+## Docker
 
 Быстрый запуск через Docker (CPU режим):
 
 ```bash
 # 1. Подготовка (один раз)
-./prepare.sh  # Скачает модели GigaAM
+./prepare.sh # Скачает модели GigaAM
 
 # 2. Сборка образа (локально)
 ./build.sh myuser/oaitt-gigaam 1.0.0
@@ -72,39 +101,44 @@ docker-compose -f docker-compose.cpu.yml up -d
 
 ---
 
-## 🏗️ Архитектура
+## Архитектура
 
 ```
 src/
-├── __init__.py              # Версия пакета
-├── app.py                   # FastAPI приложение и жизненный цикл
-├── config.py                # Конфигурация из переменных окружения
+├── __init__.py                     Версия пакета
+├── app.py                          FastAPI приложение и жизненный цикл
+├── config.py                       Конфигурация из переменных окружения
 │
-├── asr/                     # ASR движки
-│   ├── base.py              # Абстрактный базовый класс ASRModel
-│   ├── transformers.py      # Реализация на HuggingFace Transformers
-│   ├── whisperx.py          # Реализация на WhisperX
-│   ├── gigaam.py            # Реализация на GigaAM (опционально)
-│   └── factory.py           # Фабрика создания моделей
+├── asr/                            ASR движки
+│   ├── base.py                     Абстрактный базовый класс ASRModel
+│   ├── transformers.py             Реализация на HuggingFace Transformers
+│   ├── whisperx.py                 Реализация на WhisperX
+│   ├── gigaam.py                   GigaAM native (PyTorch)
+│   ├── gigaam_mlx.py               GigaAM v3 на MLX (Apple Silicon)
+│   ├── gigaam_multilingual_mlx.py  GigaAM Multilingual на MLX
+│   ├── pool.py                     Пул воркеров для параллельного инференса
+│   └── factory.py                  Фабрика создания моделей
 │
-├── models/                  # Pydantic модели
-│   ├── schemas.py           # Основные модели (Segment, TranscriptionResponse)
-│   └── openai.py            # OpenAI-совместимые модели
+├── models/                         Pydantic модели
+│   ├── schemas.py                  Основные модели (Segment, TranscriptionResponse)
+│   └── openai.py                   OpenAI-совместимые модели
 │
-├── routes/                  # HTTP маршруты
-│   ├── health.py            # GET /health - проверка здоровья
-│   ├── asr.py               # POST /asr - основной эндпоинт
-│   └── openai.py            # POST /v1/audio/transcriptions
+├── routes/                         HTTP маршруты
+│   ├── health.py                   GET /health - проверка здоровья
+│   ├── asr.py                      POST /asr - основной эндпоинт
+│   └── openai.py                   POST /v1/audio/transcriptions
 │
-├── services/                # Бизнес-логика
-│   ├── performance.py       # Отслеживание производительности
-│   ├── timeout.py           # Управление таймаутами
-│   └── debug.py             # Отладочное логирование
+├── services/                       Бизнес-логика
+│   ├── performance.py              Отслеживание производительности
+│   ├── timeout.py                  Управление таймаутами
+│   ├── memory_monitor.py           Мониторинг памяти
+│   └── debug.py                    Отладочное логирование
 │
-└── utils/                   # Утилиты
-    ├── audio.py             # Загрузка и обработка аудио
-    ├── device.py            # Работа с устройствами (CUDA/MPS/CPU)
-    └── formatters.py        # Форматирование вывода (SRT/VTT/TSV)
+└── utils/                          Утилиты
+    ├── audio.py                    Загрузка и обработка аудио
+    ├── chunking.py                 Разбиение длинного аудио
+    ├── device.py                   Работа с устройствами (CUDA/MPS/CPU)
+    └── formatters.py               Форматирование вывода (SRT/VTT/TSV)
 ```
 
 ### Основные компоненты
@@ -120,20 +154,42 @@ src/
 
 ---
 
-## 🔧 Установка
+## Установка
 
 ```bash
 # Клонирование репозитория
 git clone <repository-url>
-cd oaitt  # Open AI Transformer Transcriber
+cd oaitt # Open AI Transformer Transcriber
 
-# Создание виртуального окружения
-python3.13 -m venv venv
-source ./venv/bin/activate
+# Основное окружение: GigaAM Native / MLX / Transformers, Whisper Large V3.
+# Создаёт venv, ставит зависимости, качает модели GigaAM.
+./prepare-gigaam.sh
 
-# Установка зависимостей
-pip install -r requirements.txt
+# Multilingual модели (~3GB, опционально)
+GIGAAM_MULTILINGUAL=1 ./prepare.sh
 ```
+
+**Два виртуальных окружения.** WhisperX пинит `torch~=2.8.0`, а GigaAM требует
+`torch>=2.11.0` (фиксы утечек MPS на Apple Silicon) — в одном окружении они не уживаются:
+
+| Скрипт | venv | Движки |
+|--------|------|--------|
+| `./prepare-gigaam.sh` | `venv` | GigaAM Native / MLX / Transformers, Whisper Large V3 |
+| `./prepare-whisperx.sh` | `venv-whisperx` | WhisperX |
+
+Скрипты `run_*.sh` сами выбирают нужный интерпретатор и подскажут, какой
+prepare-скрипт запустить, если окружения нет.
+
+### Бенчмарк
+
+```bash
+./benchmark.sh # все движки, полный файл, HTML-отчёт
+./benchmark.sh --mode short -i 5 # 20s аудио, 5 итераций
+./benchmark.sh -s run_gigaam_asr.sh # один движок
+```
+
+Отчёты пишутся в `bench_results/` (HTML + JSON), последний доступен как
+`bench_results/latest.html`.
 
 ### GigaAM
 
@@ -141,7 +197,7 @@ GigaAM — это высококачественная модель распоз
 
 #### Способ 1: GigaAM Native (рекомендуется для максимальной скорости)
 
-Использует оригинальный пакет `gigaam` напрямую. Это самый быстрый вариант (~150x realtime).
+Использует оригинальный пакет `gigaam` напрямую. Это самый быстрый вариант (~327x realtime с CTC).
 
 ```bash
 # Инициализация submodule
@@ -160,8 +216,48 @@ ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_ctc python main.py
 - `v3_e2e_ctc` — end-to-end с пунктуацией (по умолчанию)
 - `v3_rnnt`, `v3_ctc` — без пунктуации
 - `v2_rnnt`, `v2_ctc` — предыдущая версия
+- `multilingual_ctc` — 70+ языков, 220M энкодер, без пунктуации
+- `multilingual_large_ctc` — 70+ языков, 600M энкодер, выше качество
 
-#### Способ 2: GigaAM через Transformers (удобнее для установки)
+##### GigaAM Multilingual
+
+Претрейн на 2M часов, 70+ языков, charwise CTC декодер. Лучший WER на русском,
+казахском, киргизском и узбекском; средний на английском. Пунктуацию не проставляет.
+
+```bash
+# Скачать multilingual модели (~3GB)
+GIGAAM_MULTILINGUAL=1 ./prepare.sh
+
+# Запуск (220M по умолчанию)
+./run_gigaam_multilingual.sh
+
+# Большая версия (600M)
+GIGAAM_MODEL=multilingual_large_ctc ./run_gigaam_multilingual.sh
+```
+
+#### Способ 2: GigaAM MLX (Apple Silicon, без PyTorch)
+
+Порты GigaAM на MLX — заметно быстрее PyTorch-версий тех же моделей на Apple Silicon.
+
+**GigaAM v3** (`vendor/gigaam-mlx`, submodule):
+
+```bash
+./run_gigaam_mlx_asr.sh # RNNT (по умолчанию)
+GIGAAM_MLX_MODEL_TYPE=ctc ./run_gigaam_mlx_asr.sh # CTC
+```
+
+**GigaAM Multilingual Large** (пакет `gigaam-multilingual-mlx` с PyPI, веса с HuggingFace):
+
+```bash
+./run_gigaam_multilingual_mlx.sh # int8 (по умолчанию)
+GIGAAM_ML_MLX_VARIANT=fp16 ./run_gigaam_multilingual_mlx.sh
+```
+
+Это тот же 600M `multilingual_large_ctc`, но через MLX — вдвое быстрее PyTorch-версии.
+Варианты `int8` и `fp16` — квантизация одних и тех же весов, скорость одинаковая,
+`int8` занимает вдвое меньше памяти. Малой 220M версии в MLX нет.
+
+#### Способ 3: GigaAM через Transformers (удобнее для установки)
 
 Загружает модель через Hugging Face, не требует submodule:
 
@@ -173,17 +269,21 @@ ASR_ENGINE=gigaam GIGAAM_MODEL=v3_e2e_ctc python main.py
 ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_ctc python main.py
 ```
 
-> ⚠️ Для этого способа могут потребоваться дополнительные зависимости: `hydra-core`, `omegaconf`, `torchaudio`.
+> **Сейчас не работает с transformers 5.x**: кастомный код модели `ai-sage/GigaAM-v3`
+> вызывает `.item()` на meta-тензоре при инициализации (`Tensor.item() cannot be called on
+> meta tensors`). Чинится на стороне модели. Используйте native — та же модель, быстрее.
+>
+> Для этого способа также требуются: `hydra-core`, `omegaconf`, `torchaudio`, `pyannote.audio`.
 
 #### Полезные ссылки
 
-- 📦 GitHub: https://github.com/salute-developers/GigaAM
-- 🤗 Hugging Face: https://huggingface.co/ai-sage/GigaAM-v3
-- 📓 Colab: https://github.com/salute-developers/GigaAM/blob/main/colab_example.ipynb
+- GitHub: https://github.com/salute-developers/GigaAM
+- Hugging Face: https://huggingface.co/ai-sage/GigaAM-v3
+- Colab: https://github.com/salute-developers/GigaAM/blob/main/colab_example.ipynb
 
 ---
 
-## ⚙️ Конфигурация
+## Конфигурация
 
 Все настройки задаются через переменные окружения:
 
@@ -246,7 +346,7 @@ ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_ctc 
 
 ---
 
-## 🚀 Запуск
+## Запуск
 
 ### Базовый запуск
 
@@ -264,9 +364,9 @@ ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_ctc 
 ./run_whisperx_large_v3.sh
 
 # Или напрямую:
-python main.py                           # По умолчанию Whisper
-ASR_ENGINE=whisperx python main.py       # WhisperX
-ASR_ENGINE=gigaam python main.py         # GigaAM Native
+python main.py # По умолчанию Whisper
+ASR_ENGINE=whisperx python main.py # WhisperX
+ASR_ENGINE=gigaam python main.py # GigaAM Native
 
 # На Apple Silicon
 DEVICE=mps python main.py
@@ -299,7 +399,7 @@ run_server(host="0.0.0.0", port=9007)
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### `GET /health`
 
@@ -394,7 +494,7 @@ curl -X POST "http://localhost:9007/v1/audio/transcriptions" \
 
 ---
 
-## 📊 Метрики уверенности
+## Метрики уверенности
 
 Сервис предоставляет метрики для оценки качества транскрипции:
 
@@ -422,7 +522,7 @@ curl -X POST "http://localhost:9007/v1/audio/transcriptions" \
 
 ---
 
-## ⏰ Адаптивные таймауты
+## Адаптивные таймауты
 
 Сервис отслеживает производительность и автоматически прерывает запросы, которые занимают слишком много времени:
 
@@ -438,22 +538,26 @@ curl -X POST "http://localhost:9007/v1/audio/transcriptions" \
 
 ---
 
-## 🍎 Apple Silicon (MPS)
+## Apple Silicon (MPS)
 
-| Движок | Поддержка MPS |
-|--------|---------------|
-| `transformers` | ✅ Полная поддержка (float16) |
-| `whisperx` | ⚠️ Fallback на CPU (ctranslate2 не поддерживает MPS) |
+| Движок | Поддержка ускорения |
+|--------|---------------------|
+| `gigaam_mlx` | MLX (Metal) — нативный бэкенд Apple Silicon, без PyTorch |
+| `gigaam_multilingual_mlx` | MLX (Metal) — нативный бэкенд Apple Silicon, без PyTorch |
+| `gigaam` | MPS (float32) |
+| `transformers` | MPS (float16) |
+| `whisperx` | Fallback на CPU (ctranslate2 не поддерживает MPS) |
 
-Для лучшей производительности на Apple Silicon используйте `transformers`:
+Для максимальной скорости на Apple Silicon используйте MLX-движки:
 
 ```bash
-ASR_ENGINE=transformers DEVICE=mps python run.py
+./run_gigaam_mlx_asr.sh                 # GigaAM v3
+./run_gigaam_multilingual_mlx.sh        # GigaAM Multilingual
 ```
 
 ---
 
-## 🐛 Отладка
+## Отладка
 
 При установке `DEBUG_LOG_DIR` сервис сохраняет каждый запрос:
 
@@ -467,7 +571,7 @@ DEBUG_LOG_DIR=./debug_logs python run.py
 
 ---
 
-## 📦 Зависимости
+## Зависимости
 
 Основные зависимости:
 - **FastAPI** — веб-фреймворк
@@ -484,7 +588,7 @@ pip-compile --upgrade requirements.in -o requirements.txt
 
 ---
 
-## 📄 Лицензия
+## Лицензия
 
 MIT License
 
@@ -492,21 +596,21 @@ Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)
 
 ---
 
-## 🙏 Благодарности
+## Благодарности
 
 ### GigaAM Team
 
 Особая благодарность команде **SberDevices / Salute** за создание и открытый доступ к модели **GigaAM** — высококачественной модели распознавания русской речи:
 
-- 🏢 **Организация**: [SberDevices](https://sberdevices.ru/)
-- 📦 **Репозиторий**: [github.com/salute-developers/GigaAM](https://github.com/salute-developers/GigaAM)
-- 🤗 **Hugging Face**: [huggingface.co/ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3)
-- 📄 **Лицензия**: MIT
+- **Организация**: [SberDevices](https://sberdevices.ru/)
+- **Репозиторий**: [github.com/salute-developers/GigaAM](https://github.com/salute-developers/GigaAM)
+- **Hugging Face**: [huggingface.co/ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3)
+- **Лицензия**: MIT
 
 GigaAM обеспечивает:
 - Высокое качество распознавания русской речи
 - Поддержку пунктуации (модели e2e)
-- Высокую скорость работы (~150x realtime)
+- Высокую скорость работы (~327x realtime)
 - Поддержку длинных аудио через VAD-сегментацию
 
 ### OpenAI Whisper
@@ -519,7 +623,7 @@ GigaAM обеспечивает:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
@@ -528,5 +632,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 <p align="center">
   <b>OAITT</b> — Open AI Transformer Transcriber<br>
   Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)<br>
-  Made with ❤️ for the speech recognition community
+  Made with for the speech recognition community
 </p>

@@ -201,7 +201,9 @@ class GigaAMASR(ASRModel):
         Args:
             audio: numpy array (16kHz, mono, float32)
             task: "transcribe" или "translate" (GigaAM не поддерживает перевод)
-            language: код языка (игнорируется, GigaAM работает только с русским)
+            language: код языка - только для поля в ответе. Модель язык на вход
+                не принимает: v3 обучена на русском, multilingual_* на 70+ языках
+                и определяет язык сама
             word_timestamps: требуется ли уровень слов (GigaAM не поддерживает)
             output: "text" или "json"
             options: дополнительные опции (не используются)
@@ -274,7 +276,7 @@ class GigaAMASR(ASRModel):
 
         # Format and return result
         formatted_result = self._format_result(
-            raw_result, duration=duration, output=output, language="ru"
+            raw_result, duration=duration, output=output, language=language or "ru"
         )
         
         # Clear raw_result to free any tensor references it might hold
@@ -394,6 +396,10 @@ class GigaAMASR(ASRModel):
             # Run forward pass - inference_mode already set at transcribe() level
             encoded, encoded_len = self.model.forward(wav, length)
             result = self.model.decoding.decode(self.model.head, encoded, encoded_len)[0]
+            # gigaam >= 0.2 отдаёт (text, token_ids, token_frames) на сэмпл,
+            # раньше была просто строка.
+            if isinstance(result, tuple):
+                result = result[0]
         finally:
             # Clear intermediate tensors to prevent memory accumulation
             if encoded_len is not None:
@@ -521,6 +527,19 @@ class GigaAMASR(ASRModel):
         Returns:
             TranscriptionResponse или строка
         """
+        # gigaam >= 0.2 отдаёт TranscriptionResult / LongformTranscriptionResult
+        # вместо строки и списка dict - разворачиваем в привычные типы.
+        if hasattr(raw_result, "segments"):
+            raw_result = [
+                {
+                    "transcription": getattr(s, "text", ""),
+                    "boundaries": getattr(s, "boundaries", None),
+                }
+                for s in raw_result.segments
+            ]
+        elif hasattr(raw_result, "text"):
+            raw_result = raw_result.text
+
         # Simple string result (short audio)
         if isinstance(raw_result, str):
             text = raw_result.strip()
