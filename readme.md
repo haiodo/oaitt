@@ -16,7 +16,7 @@ OAITT — это speech-to-text сервис транскрипции с под�
 - **Адаптивные таймауты**: Защита от зависания модели
 - **Apple Silicon**: Поддержка MPS для Mac
 - **Множество форматов**: JSON, текст, SRT, VTT, TSV
-- **Высокая производительность**: До 327x realtime с GigaAM Native на Apple Silicon
+- **Высокая производительность**: До 320x realtime с GigaAM Native на Apple Silicon
 
 ---
 
@@ -82,7 +82,7 @@ OAITT — это speech-to-text сервис транскрипции с под�
 
 ```bash
 # 1. Подготовка (один раз)
-./prepare.sh # Скачает модели GigaAM
+./prepare.sh  # Скачает модели GigaAM
 
 # 2. Сборка образа (локально)
 ./build.sh myuser/oaitt-gigaam 1.0.0
@@ -159,7 +159,7 @@ src/
 ```bash
 # Клонирование репозитория
 git clone <repository-url>
-cd oaitt # Open AI Transformer Transcriber
+cd oaitt  # Open AI Transformer Transcriber
 
 # Основное окружение: GigaAM Native / MLX / Transformers, Whisper Large V3.
 # Создаёт venv, ставит зависимости, качает модели GigaAM.
@@ -183,13 +183,30 @@ prepare-скрипт запустить, если окружения нет.
 ### Бенчмарк
 
 ```bash
-./benchmark.sh # все движки, полный файл, HTML-отчёт
-./benchmark.sh --mode short -i 5 # 20s аудио, 5 итераций
-./benchmark.sh -s run_gigaam_asr.sh # один движок
+./benchmark.sh                       # все движки, полный файл, HTML-отчёт
+./benchmark.sh --mode short -i 5     # 20s аудио, 5 итераций
+./benchmark.sh -s run_gigaam_asr.sh  # один движок
 ```
 
 Отчёты пишутся в `bench_results/` (HTML + JSON), последний доступен как
 `bench_results/latest.html`.
+
+### Проверка движков
+
+```bash
+python -m tests.test_engine_output                        # все движки
+python -m tests.test_engine_output -e "GigaAM MLX (CTC)"  # один движок
+```
+
+Поднимает каждый движок, транскрибирует эталонное аудио и проверяет валидность
+результата: отсутствие утечек Python-репрезентаций в текст (кортежи, списки
+токенов, repr объектов), минимальную длину, наличие ожидаемых слов, долю
+кириллицы, монотонность таймингов сегментов.
+
+Прогонять после обновления сабмодулей и зависимостей: апстрим меняет контракты
+молча — например, `gigaam` 0.2 стал возвращать из `decode()` кортеж
+`(text, token_ids, token_frames)` вместо строки, и сырой кортеж попадал в текст
+транскрипции при коде ответа `200`.
 
 ### GigaAM
 
@@ -197,7 +214,7 @@ GigaAM — это высококачественная модель распоз
 
 #### Способ 1: GigaAM Native (рекомендуется для максимальной скорости)
 
-Использует оригинальный пакет `gigaam` напрямую. Это самый быстрый вариант (~327x realtime с CTC).
+Использует оригинальный пакет `gigaam` напрямую. Это самый быстрый вариант (~320x realtime с CTC).
 
 ```bash
 # Инициализация submodule
@@ -242,14 +259,14 @@ GIGAAM_MODEL=multilingual_large_ctc ./run_gigaam_multilingual.sh
 **GigaAM v3** (`vendor/gigaam-mlx`, submodule):
 
 ```bash
-./run_gigaam_mlx_asr.sh # RNNT (по умолчанию)
-GIGAAM_MLX_MODEL_TYPE=ctc ./run_gigaam_mlx_asr.sh # CTC
+./run_gigaam_mlx_asr.sh                            # RNNT (по умолчанию)
+GIGAAM_MLX_MODEL_TYPE=ctc ./run_gigaam_mlx_asr.sh  # CTC
 ```
 
 **GigaAM Multilingual Large** (пакет `gigaam-multilingual-mlx` с PyPI, веса с HuggingFace):
 
 ```bash
-./run_gigaam_multilingual_mlx.sh # int8 (по умолчанию)
+./run_gigaam_multilingual_mlx.sh  # int8 (по умолчанию)
 GIGAAM_ML_MLX_VARIANT=fp16 ./run_gigaam_multilingual_mlx.sh
 ```
 
@@ -364,9 +381,9 @@ ASR_ENGINE=transformers WHISPER_MODEL=ai-sage/GigaAM-v3 GIGAAM_REVISION=e2e_ctc 
 ./run_whisperx_large_v3.sh
 
 # Или напрямую:
-python main.py # По умолчанию Whisper
-ASR_ENGINE=whisperx python main.py # WhisperX
-ASR_ENGINE=gigaam python main.py # GigaAM Native
+python main.py                      # По умолчанию Whisper
+ASR_ENGINE=whisperx python main.py  # WhisperX
+ASR_ENGINE=gigaam python main.py    # GigaAM Native
 
 # На Apple Silicon
 DEVICE=mps python main.py
@@ -551,8 +568,8 @@ curl -X POST "http://localhost:9007/v1/audio/transcriptions" \
 Для максимальной скорости на Apple Silicon используйте MLX-движки:
 
 ```bash
-./run_gigaam_mlx_asr.sh                 # GigaAM v3
-./run_gigaam_multilingual_mlx.sh        # GigaAM Multilingual
+./run_gigaam_mlx_asr.sh           # GigaAM v3
+./run_gigaam_multilingual_mlx.sh  # GigaAM Multilingual
 ```
 
 ---
@@ -610,7 +627,7 @@ Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)
 GigaAM обеспечивает:
 - Высокое качество распознавания русской речи
 - Поддержку пунктуации (модели e2e)
-- Высокую скорость работы (~327x realtime)
+- Высокую скорость работы (~320x realtime)
 - Поддержку длинных аудио через VAD-сегментацию
 
 ### OpenAI Whisper
