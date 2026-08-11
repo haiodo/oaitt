@@ -11,6 +11,8 @@ Licensed under MIT License.
 
 import io
 import logging
+import shutil
+import subprocess
 from typing import Tuple
 
 import numpy as np
@@ -20,6 +22,30 @@ import librosa
 from src.config import SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_with_ffmpeg(audio_content: bytes) -> Tuple[np.ndarray, int]:
+    """Decode any container ffmpeg understands (webm/opus, mp4, ...) that libsndfile can't.
+
+    ffmpeg reads the bytes from stdin and emits mono float32 PCM at SAMPLE_RATE on stdout.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg not found for audio decode fallback")
+    proc = subprocess.run(
+        [
+            ffmpeg, "-nostdin", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-f", "f32le", "-ac", "1", "-ar", str(SAMPLE_RATE),
+            "pipe:1",
+        ],
+        input=audio_content,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg decode failed: {proc.stderr.decode(errors='ignore')[:300]}")
+    return np.frombuffer(proc.stdout, dtype=np.float32), SAMPLE_RATE
 
 
 def load_audio_from_file(audio_content: bytes) -> np.ndarray:
@@ -50,8 +76,14 @@ def load_audio_from_file(audio_content: bytes) -> np.ndarray:
     except Exception as e:
         # Fallback to librosa (supports more formats including mp3)
         logger.debug(f"soundfile failed ({e}), falling back to librosa")
-        audio_buffer.seek(0)
-        audio_data, sample_rate = librosa.load(audio_buffer, sr=None, mono=True)
+        try:
+            audio_buffer.seek(0)
+            audio_data, sample_rate = librosa.load(audio_buffer, sr=None, mono=True)
+        except Exception as e2:
+            # Last resort: ffmpeg decodes containers libsndfile can't (webm/opus from
+            # Chrome MediaRecorder, mp4/aac from Safari, ...).
+            logger.debug(f"librosa failed ({e2}), falling back to ffmpeg")
+            audio_data, sample_rate = _decode_with_ffmpeg(audio_content)
 
     # Free the BytesIO buffer immediately — no longer needed
     audio_buffer.close()
