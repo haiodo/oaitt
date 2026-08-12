@@ -5,8 +5,7 @@
 #
 # Requirements:
 #   - macOS with Apple Silicon (M1/M2/M3/M4)
-#   - ffmpeg installed (brew install ffmpeg)
-#   - pip install mlx librosa huggingface_hub sentencepiece numpy
+#   - pip install mlx librosa av huggingface_hub sentencepiece numpy
 #
 # Available model types:
 #   - ctc  (default, ~330x realtime, good quality)

@@ -21,12 +21,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/vendor/gigaam-mlx
 
 # System deps:
-# - ffmpeg: audio loading via subprocess
-# - libsndfile1: librosa
+# - libsndfile1: soundfile/librosa (ffmpeg не нужен - декодирование webm/mp4/ogg
+#   идёт in-process через PyAV, libav поставляется внутри его wheel)
 # - g++/build-essential: mlx[cpu] JIT-компилирует kernels через g++ при первом запросе
 # - libopenblas0: BLAS backend для MLX CPU
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     libsndfile1 \
     libgomp1 \
     libopenblas0 \

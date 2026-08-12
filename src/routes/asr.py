@@ -55,8 +55,11 @@ def set_asr_model(model: "ASRModel") -> None:
     _asr_model = model
 
 
+# sync def (не async): FastAPI выполняет такой эндпоинт в threadpool. Декодирование
+# аудио и transcribe_with_timeout() блокирующие - в async-корутине они бы вставили
+# event loop и сериализовали все параллельные запросы, обнулив пул worker'ов.
 @router.post("/asr", dependencies=[Depends(verify_token)])
-async def transcribe(
+def transcribe(
     audio_file: UploadFile = File(..., description="Audio file to transcribe"),
     output: str = Query("json", description="Output format: text, json, vtt, srt, tsv"),
     task: str = Query("transcribe", description="Task: transcribe or translate"),
@@ -100,7 +103,7 @@ async def transcribe(
 
     try:
         # Read audio file
-        audio_content = await audio_file.read()
+        audio_content = audio_file.file.read()
         logger.info(
             f"Received audio file: {audio_file.filename}, "
             f"size: {len(audio_content)} bytes"

@@ -10,6 +10,9 @@ uvicorn
 pydantic
 soundfile
 librosa
+# PyAV: in-process декодирование webm/opus, ogg/opus, mp4/aac (libav в wheel,
+# системный ffmpeg не нужен). Заменил subprocess-вызов ffmpeg.
+av>=13.0.0
 python-multipart
 hydra-core
 omegaconf
