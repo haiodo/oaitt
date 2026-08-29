@@ -46,6 +46,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Проверка распознавания: записанный фрагмент уходит только в локальный сервис на этой машине.</string>
     <key>NSHumanReadableCopyright</key>
     <string>MIT. GigaAM weights (c) GigaChat Team, MLX Swift (c) Apple.</string>
 </dict>

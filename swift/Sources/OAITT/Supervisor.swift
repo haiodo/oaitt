@@ -40,6 +40,19 @@ final class Supervisor: @unchecked Sendable {
     private var shuttingDown = false
     private let queue = DispatchQueue(label: "oaitt.supervisor")
 
+    /// Понятное сообщение вместо падения воркера: чего именно не хватает и где искали.
+    static func missingWeights(settings: AppSettings) -> String? {
+        let directory = URL(fileURLWithPath: settings.modelCacheDir)
+            .appendingPathComponent(settings.modelType)
+        let files = ["weights.safetensors", "tokenizer.model"]
+        let absent = files.filter {
+            !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }
+        guard !absent.isEmpty else { return nil }
+        return "\(settings.modelType) weights not found in \(directory.path) - "
+            + "download them in Settings > Models"
+    }
+
     /// The CLI binary: next to the app inside a bundle, or in .build during development.
     static func executableURL(override: String) -> URL? {
         let fm = FileManager.default
@@ -60,6 +73,24 @@ final class Supervisor: @unchecked Sendable {
             state = .failed("oaitt-swift binary not found; set its path in settings")
             return
         }
+
+        // Проверяем веса до запуска: без этого воркер просто падал бы на старте, а
+        // супервизор десять раз его поднимал и упирался в потолок с бесполезным
+        // "crashed 11 times" вместо понятного "весов нет вот здесь".
+        if let missing = Self.missingWeights(settings: settings) {
+            state = .failed(missing)
+            return
+        }
+
+        // Прошлый запуск мог оставить мёртвые процессы с висящими обработчиками -
+        // иначе их terminationHandler снова уронил бы состояние в failed.
+        shuttingDown = true
+        queue.sync {
+            for process in processes.values where process.isRunning { process.terminate() }
+            processes.removeAll()
+        }
+        balancer?.terminate()
+        balancer = nil
 
         shuttingDown = false
         state = .starting

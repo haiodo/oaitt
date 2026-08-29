@@ -75,6 +75,11 @@ struct MenuContent: View {
                 WorkerListView(monitor: workers, inFlight: health.inFlight)
             }
 
+            if supervisor.state == .running {
+                Divider()
+                TestRecorderView(settings: settings)
+            }
+
             if supervisor.state == .running, settings.telemetryEnabled {
                 Divider()
                 MiniStatsView(directory: settings.telemetryDir)
