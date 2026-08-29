@@ -30,10 +30,40 @@ struct RemoteModel: Identifiable, Sendable, Codable, Equatable {
     }
 }
 
+/// Качает веса с прогрессом по мере записи байтов.
+///
+/// `URLSession.download(from:)` отдаёт файл целиком и промежуточного прогресса не даёт: на
+/// 843 МБ и типичных 3 МБ/с это пять минут неподвижной полосы, неотличимых от зависания.
+/// Поэтому здесь делегат с `didWriteData`.
 @Observable
-final class ModelDownloader: @unchecked Sendable {
+final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private(set) var progress: [String: Double] = [:]
+    private(set) var speed: [String: Double] = [:]
     private(set) var errors: [String: String] = [:]
+
+    private struct Job {
+        let modelID: String
+        let target: URL
+        let fileIndex: Int
+        let fileCount: Int
+        let startedAt = Date()
+    }
+
+    @ObservationIgnored private var jobs: [Int: Job] = [:]
+    @ObservationIgnored private var queues: [String: [(url: URL, target: URL)]] = [:]
+    private let lock = NSLock()
+    /// Сессию строим при первом обращении: делегатом выступает сам объект, а ссылаться на
+    /// self в инициализаторе свойства нельзя. @Observable не переваривает lazy, поэтому
+    /// вручную.
+    @ObservationIgnored private var storedSession: URLSession?
+    private var session: URLSession {
+        lock.withLock {
+            if let storedSession { return storedSession }
+            let created = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            storedSession = created
+            return created
+        }
+    }
 
     func isInstalled(_ model: RemoteModel, in directory: String) -> Bool {
         let base = URL(fileURLWithPath: directory).appendingPathComponent(model.directory)
@@ -48,40 +78,105 @@ final class ModelDownloader: @unchecked Sendable {
 
     func download(_ model: RemoteModel, into directory: String) {
         guard progress[model.id] == nil else { return }
+
+        let base = URL(fileURLWithPath: directory).appendingPathComponent(model.directory)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+
+        let pending = RemoteModel.files.compactMap { file -> (url: URL, target: URL)? in
+            guard let url = model.url(for: file) else { return nil }
+            return (url, base.appendingPathComponent(file))
+        }
+        guard !pending.isEmpty else { return }
+
         progress[model.id] = 0
         errors[model.id] = nil
+        lock.withLock { queues[model.id] = pending }
+        startNext(modelID: model.id)
+    }
 
-        Task { [weak self] in
-            let base = URL(fileURLWithPath: directory).appendingPathComponent(model.directory)
-            do {
-                try FileManager.default.createDirectory(
-                    at: base, withIntermediateDirectories: true)
+    private func startNext(modelID: String) {
+        let next: (url: URL, target: URL)? = lock.withLock {
+            guard var queue = queues[modelID], !queue.isEmpty else { return nil }
+            let item = queue.removeFirst()
+            queues[modelID] = queue
+            return item
+        }
 
-                for (index, file) in RemoteModel.files.enumerated() {
-                    guard let source = model.url(for: file) else { continue }
-                    let (temporary, _) = try await URLSession.shared.download(from: source)
-                    let target = base.appendingPathComponent(file)
-                    try? FileManager.default.removeItem(at: target)
-                    try FileManager.default.moveItem(at: temporary, to: target)
-                    await self?.report(
-                        model.id, Double(index + 1) / Double(RemoteModel.files.count))
-                }
-                await self?.finish(model.id, error: nil)
-            } catch {
-                await self?.finish(model.id, error: String(describing: error))
+        guard let next else {
+            Task { @MainActor in
+                self.progress[modelID] = nil
+                self.speed[modelID] = nil
             }
+            return
+        }
+
+        let remaining = lock.withLock { queues[modelID]?.count ?? 0 }
+        let task = session.downloadTask(with: next.url)  // session берёт лок сам, снаружи его нет
+        lock.withLock {
+            jobs[task.taskIdentifier] = Job(
+                modelID: modelID, target: next.target,
+                fileIndex: RemoteModel.files.count - remaining - 1,
+                fileCount: RemoteModel.files.count)
+        }
+        task.resume()
+    }
+
+    func urlSession(
+        _ session: URLSession, downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard let job = lock.withLock({ jobs[downloadTask.taskIdentifier] }),
+            totalBytesExpectedToWrite > 0
+        else { return }
+
+        let fileFraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        let overall = (Double(job.fileIndex) + fileFraction) / Double(job.fileCount)
+        let elapsed = Date().timeIntervalSince(job.startedAt)
+        let bytesPerSecond = elapsed > 0 ? Double(totalBytesWritten) / elapsed : 0
+
+        Task { @MainActor in
+            self.progress[job.modelID] = min(1, overall)
+            self.speed[job.modelID] = bytesPerSecond
         }
     }
 
-    @MainActor
-    private func report(_ id: String, _ value: Double) {
-        progress[id] = value
+    func urlSession(
+        _ session: URLSession, downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let job = lock.withLock({ jobs.removeValue(forKey: downloadTask.taskIdentifier) })
+        else { return }
+
+        do {
+            try? FileManager.default.removeItem(at: job.target)
+            try FileManager.default.moveItem(at: location, to: job.target)
+            // Временный файл URLSession создаёт с правами 600, и moveItem их сохраняет -
+            // общий каталог весов оказался бы нечитаемым для других пользователей.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: job.target.path)
+        } catch {
+            lock.withLock { queues[job.modelID] = [] }
+            Task { @MainActor in
+                self.errors[job.modelID] = String(describing: error)
+                self.progress[job.modelID] = nil
+            }
+            return
+        }
+        startNext(modelID: job.modelID)
     }
 
-    @MainActor
-    private func finish(_ id: String, error: String?) {
-        progress[id] = nil
-        errors[id] = error
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
+    ) {
+        guard let error, let job = lock.withLock({ jobs.removeValue(forKey: task.taskIdentifier) })
+        else { return }
+        lock.withLock { queues[job.modelID] = [] }
+        Task { @MainActor in
+            self.errors[job.modelID] = String(describing: error)
+            self.progress[job.modelID] = nil
+            self.speed[job.modelID] = nil
+        }
     }
 }
 
@@ -116,7 +211,17 @@ struct ModelListView: View {
                     Spacer()
 
                     if let value = downloader.progress[model.id] {
-                        ProgressView(value: value).frame(width: 80)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            ProgressView(value: value).frame(width: 90)
+                            if let rate = downloader.speed[model.id], rate > 0 {
+                                Text(
+                                    verbatim: String(
+                                        format: "%.0f%%  %.1f MB/s", value * 100,
+                                        rate / 1024 / 1024)
+                                )
+                                .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
                     } else if !downloader.isInstalled(model, in: settings.modelCacheDir) {
                         Button("Download") {
                             downloader.download(model, into: settings.modelCacheDir)
