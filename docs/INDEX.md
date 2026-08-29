@@ -4,6 +4,8 @@
 
 | Документ | О чём |
 |---|---|
+| [python-service.md](python-service.md) | Python-сервис: установка, конфигурация, API, Docker |
+| [macos-app.md](macos-app.md) | Приложение для macOS: запуск, настройки, данные на диске |
 | [swift-port.md](swift-port.md) | Нативный Swift/MLX порт: устройство, API, ключевые решения, ограничения |
 | [benchmarks.md](benchmarks.md) | Замеры: Python против Swift, стоимость чанка, батчинг, WER и качество нарезки |
 | [MEMORY_DEBUGGING.md](MEMORY_DEBUGGING.md) | Отладка утечек памяти в Python-сервисе |
