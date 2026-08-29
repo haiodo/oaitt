@@ -164,6 +164,19 @@ CHARS_PER_SECOND_MIN_AUDIO_SEC = float(os.getenv("CHARS_PER_SECOND_MIN_AUDIO_SEC
 # =============================================================================
 
 # API token for authentication (set to empty string to disable)
+# Дополнительные модели, поднимаемые в том же процессе, через запятую. Клиент выбирает
+# их полем `model` запроса; имена - ключи src.asr.registry.KNOWN_MODELS. Пусто - одна
+# модель по ASR_ENGINE, как раньше. Каждая модель это своя копия весов в памяти.
+ASR_MODELS = [
+    m.strip().lower() for m in os.getenv("ASR_MODELS", "").split(",") if m.strip()
+]
+
+# Кеш результатов по хешу аудио. Платформа ретраит задачи (до 5 раз на transient,
+# бесконечно на сетевых ошибках), и без кеша каждый повтор считается заново.
+# 0 записей или 0 TTL - выключено.
+ASR_CACHE_SIZE = int(os.getenv("ASR_CACHE_SIZE", "256"))
+ASR_CACHE_TTL = float(os.getenv("ASR_CACHE_TTL", "300"))
+
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "key")
 
 # =============================================================================

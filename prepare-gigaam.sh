@@ -19,7 +19,7 @@ fi
 
 if [ ! -x "${VENV_DIR}/bin/python" ]; then
     echo "Creating virtualenv at ${VENV_DIR}..."
-    python3 -m venv "$VENV_DIR"
+    python3.13 -m venv "$VENV_DIR"
 fi
 
 PYTHON="${VENV_DIR}/bin/python"

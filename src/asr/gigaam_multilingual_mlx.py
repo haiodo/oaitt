@@ -52,10 +52,10 @@ GIGAAM_ML_MLX_LOCK_FREE = (
 class GigaAMMultilingualMLXASR(ASRModel):
     """ASR реализация GigaAM-Multilingual MLX для Apple Silicon."""
 
-    def __init__(self) -> None:
+    def __init__(self, variant: Optional[str] = None) -> None:
         super().__init__()
         self.model = None
-        self.variant = GIGAAM_ML_MLX_VARIANT
+        self.variant = (variant or GIGAAM_ML_MLX_VARIANT)
         if self.variant not in ("int8", "fp16"):
             logger.warning(
                 f"Invalid GIGAAM_ML_MLX_VARIANT='{self.variant}', using 'int8'"

@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Health"])
 
+
+def _cache_stats() -> dict:
+    """Статистика кеша результатов; импорт внутри - чтобы не тянуть роут openai наверх."""
+    from src.routes.openai import cache_stats
+
+    return cache_stats()
+
 # Reference to global ASR model (will be set by app)
 _asr_model: "ASRModel | None" = None
 
@@ -129,6 +136,7 @@ async def health_check_detailed() -> dict:
         "engine": ASR_ENGINE,
         "timeout_enabled": TIMEOUT_ENABLED,
         "model": model_info,
+        "cache": _cache_stats(),
         "device": device_info,
         "performance": perf_stats,
         "debug_logging": debug_stats,

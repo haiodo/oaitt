@@ -26,6 +26,8 @@ from src.config import (
     MAX_CHARS_PER_SECOND,
     CHARS_PER_SECOND_MULTIPLIER,
     CHARS_PER_SECOND_MIN_AUDIO_SEC,
+    ASR_CACHE_SIZE,
+    ASR_CACHE_TTL,
 )
 from src.models.openai import (
     OpenAISegment,
@@ -33,6 +35,7 @@ from src.models.openai import (
     OpenAIWord,
 )
 from src.models.schemas import TranscriptionResponse, ConfidenceMetrics
+from src.services.cache import ResultCache, audio_key
 from src.services.debug import save_debug_log
 from src.services.timeout import TranscriptionTimeoutError, transcribe_with_timeout
 from src.utils.audio import load_audio_from_file
@@ -49,6 +52,21 @@ router = APIRouter(tags=["OpenAI Compatible"])
 _asr_model: "ASRModel | None" = None
 
 
+_registry = None
+_cache = ResultCache(max_entries=ASR_CACHE_SIZE, ttl_sec=ASR_CACHE_TTL)
+
+
+def cache_stats() -> dict:
+    """Статистика кеша результатов для /health/detailed."""
+    return _cache.stats()
+
+
+def set_model_registry(registry) -> None:
+    """Устанавливает реестр моделей для выбора по полю `model` запроса."""
+    global _registry
+    _registry = registry
+
+
 def set_asr_model(model: "ASRModel") -> None:
     """
     Устанавливает ссылку на глобальную ASR модель.
@@ -63,6 +81,27 @@ def set_asr_model(model: "ASRModel") -> None:
 # sync def (не async): FastAPI выполняет такой эндпоинт в threadpool. Декодирование
 # аудио и transcribe_with_timeout() блокирующие - в async-корутине они бы вставили
 # event loop и сериализовали все параллельные запросы, обнулив пул worker'ов.
+@router.get("/v1/models")
+def list_models() -> JSONResponse:
+    """
+    OpenAI-совместимый список моделей.
+
+    Отдаёт то, что реально можно передать в поле `model`. Если ASR_MODELS не задан,
+    список пуст - работает единственная модель по ASR_ENGINE.
+    """
+    names = _registry.names if _registry is not None else []
+    loaded = set(_registry.loaded()) if _registry is not None else set()
+    return JSONResponse(
+        content={
+            "object": "list",
+            "data": [
+                {"id": name, "object": "model", "owned_by": "oaitt", "loaded": name in loaded}
+                for name in names
+            ],
+        }
+    )
+
+
 @router.post("/v1/audio/transcriptions")
 def openai_transcribe(
     file: UploadFile = File(..., description="Audio file to transcribe"),
@@ -88,12 +127,12 @@ def openai_transcribe(
     - verbose_json: Полный JSON со словами, сегментами и метаданными
 
     Note:
-        Параметр 'model' принимается, но игнорируется - используется
-        настроенный ASR движок.
+        Параметр 'model' выбирает модель из ASR_MODELS, если их подняли несколько.
+        Незнакомое имя откатывается на модель по умолчанию.
 
     Args:
         file: Аудиофайл для транскрипции.
-        model: Название модели (игнорируется).
+        model: Имя модели из ASR_MODELS; незнакомое - дефолтная.
         language: Код языка (например, "en", "ru").
         prompt: Необязательная подсказка (не используется).
         response_format: Формат ответа.
@@ -121,6 +160,10 @@ def openai_transcribe(
     """
     if _asr_model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+
+    # Поле `model` выбирает движок, если в ASR_MODELS подняли несколько. Незнакомое
+    # имя - дефолтная модель: клиенты присылают и `whisper-1`, и `gigaam`.
+    asr_model = _registry.get(model) if _registry is not None else _asr_model
 
     # Determine if word timestamps are needed
     want_words = response_format == "verbose_json" or (
@@ -150,10 +193,29 @@ def openai_transcribe(
         # Use default language if not specified
         effective_language = language if language else DEFAULT_LANGUAGE
 
+        # Тот же чанк с теми же параметрами уже считали - отдать сохранённое.
+        cache_key = audio_key(
+            audio_data,
+            model=getattr(asr_model, "__class__", type(asr_model)).__name__,
+            model_name=model,
+            language=effective_language,
+            words=want_words,
+            output=internal_output,
+        )
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"[OpenAI API] Cache hit for {file.filename}")
+            return _format_openai_response(
+                result=cached,
+                response_format=response_format,
+                language=language,
+                audio_duration_sec=audio_duration_sec,
+            )
+
         # Run transcription with adaptive timeout
         try:
             result, elapsed_time = transcribe_with_timeout(
-                asr_model=_asr_model,
+                asr_model=asr_model,
                 audio=audio_data,
                 audio_duration_sec=audio_duration_sec,
                 task="transcribe",
@@ -244,6 +306,10 @@ def openai_transcribe(
                         return PlainTextResponse(content="WEBVTT\n\n", media_type="text/vtt")
                     else:
                         return PlainTextResponse(content="")
+
+        # Кешируем уже обогащённый результат: confidence считается один раз, и на
+        # повторе не накапливаются rejection_reasons.
+        _cache.put(cache_key, result)
 
         # Format response based on response_format
         return _format_openai_response(

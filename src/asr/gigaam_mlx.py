@@ -56,6 +56,103 @@ GIGAAM_MLX_PAD_TO_FIXED = os.environ.get("GIGAAM_MLX_PAD_TO_FIXED", "true").lowe
 GIGAAM_MLX_PAD_BUCKET_SEC = float(os.environ.get("GIGAAM_MLX_PAD_BUCKET_SEC", "1.0"))
 
 
+
+def _encoder_frames(samples: int) -> int:
+    """Сколько кадров энкодера даёт непаддированное аудио.
+
+    Mel: hop=160, win=320, center=False -> T = (samples - 320) // 160 + 1.
+    Pre-encode: два Conv1d со stride=2 и padding=(k-1)//2 -> ceil(T/2) дважды.
+    """
+    t_mel = max(0, (samples - 320) // 160 + 1)
+    return max(1, ((t_mel + 1) // 2 + 1) // 2)
+
+
+def _ctc_decode_batch(model, encoded, seq_lens: List[int]) -> List[List[int]]:
+    """Greedy CTC по батчу: один argmax, схлопывание повторов и blank на CPU."""
+    import mlx.core as mx
+
+    labels = mx.argmax(model.head(encoded), axis=-1)
+    mx.eval(labels)
+    table = np.array(labels.tolist())
+    blank_id = model.num_classes - 1
+
+    hypotheses = []
+    for row, length in zip(table, seq_lens):
+        tokens, prev = [], blank_id
+        for token in row[:length]:
+            if token != blank_id and token != prev:
+                tokens.append(int(token))
+            prev = token
+        hypotheses.append(tokens)
+    return hypotheses
+
+
+def _rnnt_decode_batch(model, encoded_list: list, seq_lens: List[int], max_symbols: int = 10):
+    """Greedy RNNT сразу по нескольким выходам энкодера.
+
+    Пер-чанковый цикл делает один GPU->CPU sync на кадр, чтобы прочитать argmax.
+    Батч амортизирует эти синхронизации по B гипотезам: один sync на кадр на весь
+    батч. Состояние LSTM продвигается маской только у строк, выдавших символ.
+    """
+    import mlx.core as mx
+
+    if not seq_lens:
+        return []
+
+    batch = len(encoded_list)
+    decoder, joint = model.decoder, model.joint
+    blank_id, hidden_size = decoder.blank_id, decoder.pred_hidden
+    max_t = max(seq_lens)
+    channels = encoded_list[0].shape[1]
+
+    padded = mx.concatenate(
+        [
+            enc[:, :, :max_t] if enc.shape[2] >= max_t
+            else mx.concatenate([enc, mx.zeros((1, channels, max_t - enc.shape[2]))], axis=2)
+            for enc in encoded_list
+        ],
+        axis=0,
+    )
+
+    hypotheses: List[List[int]] = [[] for _ in range(batch)]
+    labels = np.zeros((batch, 1), dtype=np.int32)
+    has_label = np.zeros((batch, 1, 1), dtype=np.float32)
+    hidden = mx.zeros((batch, hidden_size))
+    cell = mx.zeros((batch, hidden_size))
+
+    for t in range(max_t):
+        frame = mx.expand_dims(padded[:, :, t], axis=1)
+        not_blank = [t < seq_lens[b] for b in range(batch)]
+        symbols = 0
+
+        while symbols < max_symbols and any(not_blank):
+            emb = decoder.embed(mx.array(labels)) * mx.array(has_label)
+            all_hidden, all_cell = decoder.lstm(emb, hidden, cell)
+            best = np.array(mx.argmax(joint(frame, all_hidden)[:, 0, 0, :], axis=-1).tolist())
+
+            advanced = np.zeros((batch, 1), dtype=np.float32)
+            for b in range(batch):
+                if not not_blank[b]:
+                    continue
+                if best[b] == blank_id:
+                    not_blank[b] = False
+                else:
+                    hypotheses[b].append(int(best[b]))
+                    labels[b, 0] = best[b]
+                    has_label[b] = 1.0
+                    advanced[b] = 1.0
+
+            symbols += 1
+            if not advanced.any():
+                break
+
+            mask = mx.array(advanced) > 0
+            hidden = mx.where(mask, all_hidden[:, -1, :], hidden)
+            cell = mx.where(mask, all_cell[:, -1, :], cell)
+
+    return hypotheses
+
+
 class GigaAMMLXASR(ASRModel):
     """
     ASR реализация GigaAM-MLX для Apple Silicon.
@@ -65,11 +162,11 @@ class GigaAMMLXASR(ASRModel):
     - "rnnt" - выше качество, ~77x realtime
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model_type: Optional[str] = None) -> None:
         super().__init__()
         self.model = None
         self.tokenizer = None
-        self.model_type = (GIGAAM_MLX_MODEL_TYPE or "ctc").lower().strip()
+        self.model_type = (model_type or GIGAAM_MLX_MODEL_TYPE or "ctc").lower().strip()
         if self.model_type not in ("ctc", "rnnt"):
             logger.warning(
                 f"Invalid GIGAAM_MLX_MODEL_TYPE='{self.model_type}', using 'ctc'"
@@ -189,66 +286,90 @@ class GigaAMMLXASR(ASRModel):
 
     def _transcribe_audio(self, audio: np.ndarray) -> List[dict]:
         """Чанкует и транскрибирует аудио через MLX."""
-        import math
         import mlx.core as mx
-        from gigaam_mlx.audio import compute_mel, split_audio
+        from gigaam_mlx.audio import split_audio
 
         chunks = split_audio(audio, max_chunk_sec=self.chunk_sec, sr=SAMPLE_RATE)
-        results: List[dict] = []
+        prepared = [self._prepare_chunk(audio, ch) for ch in chunks]
+        prepared = [p for p in prepared if p is not None]
+        if not prepared:
+            return []
 
-        # Bucket-padding: округляем длину чанка вверх до GIGAAM_MLX_PAD_BUCKET_SEC.
-        # bucket=0 -> один shape (всегда до chunk_sec); bucket=1 -> N=chunk_sec shapes.
+        texts = self.decode_batch(
+            [p["mel"] for p in prepared], [p["real_frames"] for p in prepared]
+        )
+
+        return [
+            {"text": text, "start": p["start_sec"], "end": p["end_sec"]}
+            for p, text in zip(prepared, texts)
+            if text
+        ]
+
+    def _prepare_chunk(self, audio: np.ndarray, ch: dict) -> Optional[dict]:
+        """Режет чанк, паддит до бакета и считает mel."""
+        import math
+        from gigaam_mlx.audio import compute_mel
+
+        chunk_audio = audio[ch["start_sample"]:ch["end_sample"]]
+        real_len = len(chunk_audio)
+        if real_len < 320:
+            return None
+
         max_samples = int(self.chunk_sec * SAMPLE_RATE)
         if GIGAAM_MLX_PAD_TO_FIXED:
-            if GIGAAM_MLX_PAD_BUCKET_SEC <= 0:
-                bucket_samples = max_samples
-            else:
-                bucket_samples = int(GIGAAM_MLX_PAD_BUCKET_SEC * SAMPLE_RATE)
+            bucket_samples = (
+                max_samples if GIGAAM_MLX_PAD_BUCKET_SEC <= 0
+                else int(GIGAAM_MLX_PAD_BUCKET_SEC * SAMPLE_RATE)
+            )
+            target = min(max_samples, int(math.ceil(real_len / bucket_samples)) * bucket_samples)
+            if real_len < target:
+                chunk_audio = np.pad(chunk_audio, (0, target - real_len))
+
+        return {
+            "mel": compute_mel(chunk_audio, sr=SAMPLE_RATE),
+            "real_frames": _encoder_frames(real_len),
+            "start_sec": ch["start_sec"],
+            "end_sec": ch["end_sec"],
+        }
+
+    def decode_batch(self, mels: List[np.ndarray], real_frames: List[int]) -> List[str]:
+        """Прогоняет чанки через энкодер и декодирует.
+
+        Энкодер требует одинаковой формы, поэтому чанки группируются по длине mel.
+        Декодер RNNT - нет: он паддит выходы энкодера до общего числа кадров сам,
+        и декодировать их надо одним батчем, иначе теряется весь смысл (один
+        GPU->CPU sync на кадр амортизируется по числу гипотез, а не по группе).
+        """
+        import mlx.core as mx
+
+        if not mels:
+            return []
+
+        groups: dict = {}
+        for index, mel in enumerate(mels):
+            groups.setdefault(mel.shape, []).append(index)
+
+        encoded_by_index: dict = {}
+        lens_by_index: dict = {}
+        for indices in groups.values():
+            encoded, seq_len = self.model.encode(mx.array(np.stack([mels[i] for i in indices])))
+            for position, index in enumerate(indices):
+                encoded_by_index[index] = encoded[position : position + 1]
+                lens_by_index[index] = min(seq_len, real_frames[index])
+        mx.eval(list(encoded_by_index.values()))
+
+        order = sorted(encoded_by_index)
+        encoded_list = [encoded_by_index[i] for i in order]
+        lens = [lens_by_index[i] for i in order]
+
+        if self.model_type == "rnnt":
+            hypotheses = _rnnt_decode_batch(self.model, encoded_list, lens)
         else:
-            bucket_samples = None
-
-        for ch in chunks:
-            chunk_audio = audio[ch["start_sample"]:ch["end_sample"]]
-            real_len = len(chunk_audio)
-            padded = False
-
-            if bucket_samples is not None:
-                # Round up to nearest bucket boundary, cap to max_samples.
-                target = min(
-                    max_samples,
-                    int(math.ceil(real_len / bucket_samples)) * bucket_samples,
-                )
-                if real_len < target:
-                    chunk_audio = np.pad(chunk_audio, (0, target - real_len))
-                    padded = True
-
-            mel = compute_mel(chunk_audio, sr=SAMPLE_RATE)
-            mel_mx = mx.array(mel[np.newaxis])
-
-            encoded, seq_len = self.model.encode(mel_mx)
-
-            # При padding пересчитываем seq_len из реальной длины аудио.
-            # Mel: hop=160, win=320, center=False -> T_mel = (real_len - 320) // 160 + 1.
-            # Pre-encode: 2x Conv1d stride=2 padding=(k-1)//2=2 -> ceil(T/2) twice.
-            if padded:
-                t_mel = max(0, (real_len - 320) // 160 + 1)
-                t_after = (t_mel + 1) // 2
-                t_after = (t_after + 1) // 2
-                real_seq_len = max(1, t_after)
-                seq_len = min(seq_len, real_seq_len)
-
-            mx.eval(encoded)
-            token_ids = self.model.decode(encoded, seq_len)
-            text = self.tokenizer.decode(token_ids).strip()
-
-            if text:
-                results.append({
-                    "text": text,
-                    "start": ch["start_sec"],
-                    "end": ch["end_sec"],
-                })
-
-        return results
+            hypotheses = [
+                _ctc_decode_batch(self.model, enc, [n])[0]
+                for enc, n in zip(encoded_list, lens)
+            ]
+        return [self.tokenizer.decode(ids).strip() for ids in hypotheses]
 
     def _format_result(
         self,

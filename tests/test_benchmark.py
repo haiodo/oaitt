@@ -121,6 +121,10 @@ BENCHMARK_SCRIPTS = [
      "env": {"GIGAAM_MLX_MODEL_TYPE": "ctc"}, "expected": "gigaam_mlx", "punct": True},
     {"name": "GigaAM MLX (RNNT)", "script": "run_gigaam_mlx_asr.sh",
      "env": {"GIGAAM_MLX_MODEL_TYPE": "rnnt"}, "expected": "gigaam_mlx", "punct": True},
+    {"name": "GigaAM Swift (CTC)", "script": "run_swift_asr.sh",
+     "env": {"GIGAAM_MLX_MODEL_TYPE": "ctc"}, "expected": "gigaam_mlx_swift", "punct": True},
+    {"name": "GigaAM Swift (RNNT)", "script": "run_swift_asr.sh",
+     "env": {"GIGAAM_MLX_MODEL_TYPE": "rnnt"}, "expected": "gigaam_mlx_swift", "punct": True},
     # MLX-порт есть только для large (600M) - малой 220M версии на HF нет.
     # int8/fp16 - квантизация одних и тех же весов, не разные размеры.
     {"name": "GigaAM Multilingual Large MLX (int8)", "script": "run_gigaam_multilingual_mlx.sh",
@@ -442,7 +446,9 @@ def start_server(script_name: str, env_overrides: Optional[dict] = None) -> Opti
                 print(f"Failed to free port {SERVER_PORT}")
                 return None
 
-    env = {**os.environ, **(env_overrides or {})}
+    # Кеш результатов сделал бы замер бессмысленным: харнесс гоняет один и тот же файл,
+    # и со второй итерации мерилось бы попадание в кеш, а не модель (145000x realtime).
+    env = {**os.environ, "ASR_CACHE_SIZE": "0", **(env_overrides or {})}
 
     # Start server process with new process group
     process = subprocess.Popen(
