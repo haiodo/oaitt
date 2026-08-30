@@ -33,6 +33,7 @@ let package = Package(
             dependencies: [
                 "GigaAM",
                 .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "NIOHTTPTypes", package: "swift-nio-extras"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]

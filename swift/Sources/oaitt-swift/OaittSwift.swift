@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import GigaAM
 import Hummingbird
+import MLX
 
 @main
 struct OaittSwift: AsyncParsableCommand {
@@ -28,6 +29,12 @@ struct ModelOptions: ParsableArguments {
 
     @Option(help: "Round chunk length up to this many seconds before encoding; 0 disables.")
     var padBucketSec = 1.0
+
+    /// MLX держит освобождённые буферы про запас, и на разнородных длинах чанков кеш
+    /// разрастается до гигабайтов: замер показал 3.6 ГБ кеша при 849 МБ весов. На машине
+    /// с 8-16 ГБ это решает, влезут ли два воркера. 0 - без ограничения.
+    @Option(help: "Cap the MLX buffer cache, in megabytes; 0 leaves it unbounded.")
+    var gpuCacheLimitMb = 512
 
     /// Chosen per request by the `model` field; loaded on first use.
     @Option(help: "Extra models to serve, comma separated: gigaam-ctc, gigaam-rnnt.")
@@ -59,6 +66,12 @@ struct ModelOptions: ParsableArguments {
 
     @Flag(help: "Exit when the parent process is gone; used by the app supervisor.")
     var exitWithParent = false
+
+    func applyMemoryLimits() {
+        if gpuCacheLimitMb > 0 {
+            MLX.GPU.set(cacheLimit: gpuCacheLimitMb * 1024 * 1024)
+        }
+    }
 
     func makeTranscriber() throws -> GigaAMTranscriber {
         let dir = URL(fileURLWithPath: modelCacheDir).appendingPathComponent(modelType.rawValue)
@@ -120,6 +133,7 @@ struct Serve: AsyncParsableCommand {
 
     func run() async throws {
         if model.exitWithParent { Self.exitWhenOrphaned() }
+        model.applyMemoryLimits()
 
         let transcriber = try model.makeTranscriber()
         let registry = model.makeRegistry(fallback: transcriber)
