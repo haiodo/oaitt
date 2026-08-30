@@ -25,6 +25,8 @@ final class AppSettings {
     /// Extra models the user added by HuggingFace repo, as JSON.
     var customModels: String { didSet { store(customModels, "customModels") } }
     var logRetentionDays: Int { didSet { store(logRetentionDays, "logRetentionDays") } }
+    /// MLX keeps freed buffers around; on mixed chunk lengths that cache grows to gigabytes.
+    var gpuCacheLimitMb: Int { didSet { store(gpuCacheLimitMb, "gpuCacheLimitMb") } }
 
     private let defaults = UserDefaults.standard
 
@@ -47,6 +49,7 @@ final class AppSettings {
         telemetryDir = d.string(forKey: "telemetryDir") ?? ""
         customModels = d.string(forKey: "customModels") ?? "[]"
         logRetentionDays = d.object(forKey: "logRetentionDays") as? Int ?? 7
+        gpuCacheLimitMb = d.object(forKey: "gpuCacheLimitMb") as? Int ?? 512
     }
 
     private func store(_ value: Any, _ key: String) {

@@ -154,6 +154,7 @@ final class Supervisor: @unchecked Sendable {
                 arguments += ["--telemetry-dir", settings.telemetryDir]
             }
             arguments += ["--log-retention-days", String(settings.logRetentionDays)]
+            arguments += ["--gpu-cache-limit-mb", String(settings.gpuCacheLimitMb)]
             arguments.append("--exit-with-parent")
             let pid = launch(
                 executable: executable, arguments: arguments, workerIndex: index, port: port)
