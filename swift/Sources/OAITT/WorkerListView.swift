@@ -31,7 +31,7 @@ struct WorkerListView: View {
 
                     Text(verbatim: memoryText(row))
                         .font(.caption2).foregroundStyle(.secondary)
-                        .frame(width: 82, alignment: .trailing)
+                        .lineLimit(1).fixedSize()
 
                     Spacer()
 
@@ -53,11 +53,13 @@ struct WorkerListView: View {
     /// Показываем footprint, как Activity Monitor, и отдельно то, что MLX держит на GPU -
     /// второе входит в первое, но его полезно видеть само по себе.
     private func memoryText(_ row: WorkerMonitor.Row) -> String {
-        let total =
-            row.footprintMB >= 1024
-            ? String(format: "%.1f GB", row.footprintMB / 1024)
-            : String(format: "%.0f MB", row.footprintMB)
-        return row.gpuMB > 0 ? "\(total) · \(Int(row.gpuMB)) GPU" : total
+        // Обе величины в гигабайтах: в мегабайтах строка не влезала в ширину попапа и
+        // обрывалась на "865 MB · 848...".
+        func short(_ mb: Double) -> String {
+            mb >= 1024 ? String(format: "%.1fG", mb / 1024) : String(format: "%.0fM", mb)
+        }
+        return row.gpuMB > 0
+            ? "\(short(row.footprintMB)) · \(short(row.gpuMB)) gpu" : short(row.footprintMB)
     }
 
     private func uptimeText(_ row: WorkerMonitor.Row) -> String {
