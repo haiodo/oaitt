@@ -40,6 +40,27 @@ final class Supervisor: @unchecked Sendable {
     private var shuttingDown = false
     private let queue = DispatchQueue(label: "oaitt.supervisor")
 
+    /// Кто держит порт. Чаще всего это осиротевший воркер прошлого запуска, и без этой
+    /// проверки всё выглядит как "worker crashed 11 times".
+    static func portInUse(_ port: Int) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F", "c"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        let names = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n")
+            .filter { $0.hasPrefix("c") }
+            .map { String($0.dropFirst()) }
+        return names.first
+    }
+
     /// Понятное сообщение вместо падения воркера: чего именно не хватает и где искали.
     static func missingWeights(settings: AppSettings) -> String? {
         let directory = URL(fileURLWithPath: settings.modelCacheDir)
@@ -79,6 +100,12 @@ final class Supervisor: @unchecked Sendable {
         // "crashed 11 times" вместо понятного "весов нет вот здесь".
         if let missing = Self.missingWeights(settings: settings) {
             state = .failed(missing)
+            return
+        }
+
+        if let busy = Self.portInUse(settings.port) {
+            state = .failed(
+                "port \(settings.port) is taken by \(busy) - stop it or pick another port")
             return
         }
 
@@ -127,6 +154,7 @@ final class Supervisor: @unchecked Sendable {
                 arguments += ["--telemetry-dir", settings.telemetryDir]
             }
             arguments += ["--log-retention-days", String(settings.logRetentionDays)]
+            arguments.append("--exit-with-parent")
             let pid = launch(
                 executable: executable, arguments: arguments, workerIndex: index, port: port)
             workers.append(
@@ -141,6 +169,7 @@ final class Supervisor: @unchecked Sendable {
             ]
             // Workers get the same token, so the balancer must also present it upstream.
             balancerArguments += ["--api-key", settings.apiKey, "--backend-key", settings.apiKey]
+            balancerArguments.append("--exit-with-parent")
             balancer = spawn(executable: executable, arguments: balancerArguments)
         }
         state = .running

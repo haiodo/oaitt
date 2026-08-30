@@ -34,7 +34,12 @@ struct Balance: AsyncParsableCommand {
     @Option(help: "Requests allowed in flight before the balancer answers 503.")
     var maxInFlight = 64
 
+    @Flag(help: "Exit when the parent process is gone; used by the app supervisor.")
+    var exitWithParent = false
+
     func run() async throws {
+        if exitWithParent { Serve.exitWhenOrphaned() }
+
         let urls = backends.split(separator: ",").compactMap {
             URL(string: $0.trimmingCharacters(in: .whitespaces))
         }
