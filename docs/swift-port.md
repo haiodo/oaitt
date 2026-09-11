@@ -100,10 +100,5 @@ GPU-исполнение сериализует рантайм. `--no-lock-free`
   только процессами: 144 -> 263 -> 369x на 1/2/4 процессах. Причина - сериализация в
   MLX Swift; per-stream параллелизм недоступен, слои не пробрасывают `stream`, всё идёт в
   default stream, а `using(stream:)` в API нет, только `using(device:)`.
-- **`mlx.metallib` копируется из питоновского venv.** SwiftPM не собирает Metal-шейдеры
-  mlx-swift (это делает только их Xcode-проект), и без метallib бинарь падает с
-  `Failed to load the default metallib`. `run_swift_asr.sh` берёт готовый файл из
-  `venv/lib/*/site-packages/mlx/lib/mlx.metallib`; MLX ищет colocated `mlx.metallib`
-  первым. Версии 0.32.2 (wheel) против 0.31.1 (mlx-swift) на практике совместимы, но при
-  апгрейде сломается здесь.
-- Нет: word timestamps, multilingual-моделей, пула воркеров.
+- Нет: word timestamps, multilingual-моделей. Пул воркеров есть только на уровне
+  процессов - приложение поднимает их само ([macos-app.md](macos-app.md)).

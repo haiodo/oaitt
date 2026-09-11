@@ -88,8 +88,7 @@ Swift быстрее на одном запросе и держит куда б�
 | [`docs/swift-port.md`](docs/swift-port.md) | Устройство Swift-порта и его ограничения |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | Замеры скорости и качества |
 | [`docs/MEMORY_DEBUGGING.md`](docs/MEMORY_DEBUGGING.md) | Отладка утечек памяти |
-
-План работ ведётся в трекере задач, а не здесь.
+| [`docs/roadmap.md`](docs/roadmap.md) | План работ: что дальше и что проверено и отвергнуто |
 
 ## Лицензия
 
