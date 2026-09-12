@@ -126,6 +126,29 @@ GIGAAM_ML_MLX_VARIANT=fp16 ./run_gigaam_multilingual_mlx.sh
 Варианты `int8` и `fp16` — квантизация одних и тех же весов, скорость одинаковая,
 `int8` занимает вдвое меньше памяти. Малой 220M версии в MLX нет.
 
+#### Parakeet TDT v3 (25 языков, word-level timestamps)
+
+**NVIDIA Parakeet-TDT-v3** (пакет `parakeet-mlx` с PyPI, веса с HuggingFace):
+
+```bash
+./run_parakeet_mlx.sh                                  # fp16 (по умолчанию)
+PARAKEET_VARIANT=int8 ./run_parakeet_mlx.sh            # квантованный энкодер
+```
+
+600M FastConformer-TDT, 25 европейских языков с автоопределением. WER на общем наборе
+Golos — 3.99% (fp16) против 6.69% у GigaAM RNNT, английские вставки внутри русского текста
+транслитерирует кириллицей. Отдаёт word-level timestamps и пер-токенную confidence —
+в `verbose_json` заполнены `words` (границы слов, вероятность), без запроса
+`timestamp_granularities`.
+
+`int8` — квантованный энкодер (8 бит, group_size 64): WER 4.05%, на длинных файлах в 1.7
+раза быстрее fp16, но на коротких чанках (митинговый профиль) fp16 быстрее — квантование
+проигрывает на накладных расходах мелких вызовов. Дефолт — `fp16`.
+
+Все вызовы MLX идут через один выделенный поток: в mlx 0.32.x eval графа Parakeet из
+другого потока падает с «There is no Stream(cpu, N)» — это обходит проблему ценой
+сериализации запросов (GPU всё равно исполняет их последовательно).
+
 #### Способ 3: GigaAM через Transformers (удобнее для установки)
 
 Загружает модель через Hugging Face, не требует submodule:

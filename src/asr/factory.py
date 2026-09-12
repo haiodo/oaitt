@@ -26,6 +26,7 @@ SUPPORTED_ENGINES = {
     "gigaam": "GigaAMASR",
     "gigaam_mlx": "GigaAMMLXASR",
     "gigaam_multilingual_mlx": "GigaAMMultilingualMLXASR",
+    "parakeet_mlx": "ParakeetMLXASR",
 }
 
 
@@ -77,6 +78,11 @@ def create_asr_model() -> "ASRModel":
         from src.asr.gigaam_multilingual_mlx import GigaAMMultilingualMLXASR
 
         return GigaAMMultilingualMLXASR()
+
+    elif engine == "parakeet_mlx":
+        from src.asr.parakeet_mlx import ParakeetMLXASR
+
+        return ParakeetMLXASR()
 
     else:
         supported = ", ".join(f"'{e}'" for e in SUPPORTED_ENGINES.keys())
@@ -161,6 +167,22 @@ def get_engine_info(engine: str | None = None) -> dict:
                 "70+ languages; best WER on Russian, Kazakh, Kyrgyz, Uzbek",
                 "No punctuation (charwise CTC)",
                 "int8 / fp16 weight variants",
+            ],
+        },
+        "parakeet_mlx": {
+            "name": "parakeet_mlx",
+            "class": "ParakeetMLXASR",
+            "description": (
+                "NVIDIA Parakeet-TDT-v3 (600M, 25 European languages) via parakeet-mlx"
+            ),
+            "features": [
+                "Apple Silicon native (MLX framework)",
+                "~72x realtime",
+                "WER 3.99% on Golos common subset - better than GigaAM (6.69%)",
+                "Word-level timestamps and per-token confidence built-in",
+                "English transliterated to Cyrillic (matches Russian references)",
+                "Long audio via 120s windows with 15s overlap",
+                "No PyTorch dependency",
             ],
         },
     }

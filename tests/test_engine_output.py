@@ -91,7 +91,7 @@ def check_text(text: str) -> list[str]:
     return problems
 
 
-def check_response(result: dict) -> list[str]:
+def check_response(result: dict, expect_words: bool = False) -> list[str]:
     """Проверяет структуру ответа API."""
     problems = check_text(result.get("text") or "")
 
@@ -106,6 +106,23 @@ def check_response(result: dict) -> list[str]:
             start, end = seg.get("start"), seg.get("end")
             if start is not None and end is not None and end < start:
                 problems.append(f"segment {i}: end {end} < start {start}")
+
+    if expect_words:
+        # Движок заявляет word-level timestamps - проверяем контракт: непустой
+        # список, валидные границы, вероятность в [0, 1].
+        words = result.get("words")
+        if not words:
+            problems.append("expected non-empty words in verbose_json response")
+        else:
+            for i, w in enumerate(words):
+                w_start, w_end = w.get("start"), w.get("end")
+                if w_start is None or w_end is None:
+                    problems.append(f"word {i}: missing start/end")
+                elif w_end < w_start:
+                    problems.append(f"word {i}: end {w_end} < start {w_start}")
+                prob = w.get("prob") or w.get("probability")
+                if prob is not None and not (0.0 <= prob <= 1.0):
+                    problems.append(f"word {i}: probability {prob} outside [0, 1]")
 
     return problems
 
@@ -139,7 +156,7 @@ def run_engine(entry: dict, audio_path: Path) -> list[str]:
         print(f"  text[:100]: {text[:100]!r}")
         print(f"  length: {len(text)} chars, segments: {len(result.get('segments') or [])}")
 
-        problems = check_response(result)
+        problems = check_response(result, expect_words=entry.get("words", False))
         if problems:
             for p in problems:
                 print(f"  FAIL: {p}")

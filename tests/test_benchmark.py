@@ -133,6 +133,9 @@ BENCHMARK_SCRIPTS = [
     {"name": "GigaAM Multilingual Large MLX (fp16)", "script": "run_gigaam_multilingual_mlx.sh",
      "env": {"GIGAAM_ML_MLX_VARIANT": "fp16"},
      "expected": "gigaam_multilingual_mlx", "punct": False},
+    {"name": "Parakeet TDT v3 (fp16)", "script": "run_parakeet_mlx.sh",
+     "env": {"PARAKEET_VARIANT": "fp16"}, "expected": "parakeet_mlx", "punct": True,
+     "words": True},
 ]
 
 # Whisper-движки держим отдельно - они на порядок медленнее GigaAM на русском,

@@ -89,6 +89,64 @@ FluidAudio - CoreML/ANE вместо MLX.
   промежуточных тензоров с Python-портом.
 - int8-вариант - качество проверить до дефолтов.
 
+### Прогресс этапа 1 (обновляется по мере работ)
+
+- [x] `parakeet-mlx` 0.5.2 поставлен в venv проекта; API и типы результата проверены.
+- [x] `src/asr/parakeet_mlx.py`: класс `ParakeetMLXASR(variant fp16|int8)`, слова из
+  токенов (граница - ведущий пробел piece'а, probability = min), окна 120s/15s для
+  длинных файлов, инференс в выделенном потоке.
+- [x] Регистрация: `factory.py` (`parakeet_mlx`), `registry.py` (`parakeet-tdt-v3`,
+  `parakeet-tdt-v3-int8`), `config.py` (`PARAKEET_*`), `requirements.txt`,
+  лаунчер `run_parakeet_mlx.sh`, запись в `tests/test_benchmark.py`.
+- [x] Тесты: движок в `test_engine_output.py`; проверка непустых `words` с валидными
+  границами в `verbose_json` (флаг `words: True` у записи движка).
+- [x] Верификация: `make check` зелёный; серверный тест движка зелёный; WER через код
+  сервиса: fp16 3.99% (совпало с прямым прогоном), int8 4.05%; int8 быстрее в 1.7 раза
+  на длинных файлах (125x против 72x), но медленнее на коротких чанках - дефолт fp16.
+- [x] Доки: `python-service.md`, `readme.md`, `benchmarks.md`.
+- Этап 1 закрыт. Этап 2 (Swift-порт) - следующий.
+
+### Прогресс этапа 2 (Swift-порт)
+
+- [x] Веса: `scripts/convert_parakeet_to_mlx_swift.py` -> `data/parakeet_tdt_v3/`
+  (weights bf16, filterbanks librosa-slaney, vocab.txt).
+- [x] Модель: `Parakeet.swift` (FastConformer 24 слоя, rel_pos attention, TDT-декод),
+  `ParakeetFeatures.swift` (log-mel, PE), `ParakeetTranscriber.swift` (ASREngine,
+  слова из piece'ов по ведущему пробелу).
+- [x] Интеграция: `--parakeet-dir` в CLI (transcribe/serve/bench), Registry
+  (`parakeet-tdt-v3`), `verbose_json` с `words`, `Segment.words`.
+- [x] Верификация: текст побуквенно совпадает с Python `parakeet-mlx` на 10s и на
+  137.4s одним чанком (`--max-chunk-sec 200`); `make check` зелёный; bench 122.7x
+  (Python 72x); серверный тест: words в ответе; 20 запросов - память плоская.
+- [ ] Приложение: воркер Parakeet в Supervisor/ModelDownloader (CLI и сервер готовы).
+- [ ] Батчевый декод чанков (сейчас чанк за чанком; у TDT для этого есть duration-джампы).
+
+Этап 2 по сервису и CLI закрыт. Уроки порта зафиксированы в [swift-port.md](swift-port.md).
+
+### Контекст для продолжения (достаточно для новой сессии)
+
+- Референс движка - `src/asr/gigaam_mlx.py` (load/transcribe/_format_result/_cleanup).
+  Схемы ответа: `src/models/schemas.py:16` `WordTimestamp{word,start,end,probability}`,
+  `:24` `Segment` с полем `words`; роут `src/routes/openai.py:423` уже сериализует
+  `seg.words` в `verbose_json` - правки роутов не нужны.
+- Конфиг-паттерн - блок `GIGAAM_MLX_*` в `src/config.py:52-58`. Вариант int8 -
+  `sonic-speech/parakeet-tdt-0.6b-v3-int8`, дефолт fp16 - `mlx-community/parakeet-tdt-0.6b-v3`.
+- WER-оценка: `scripts/eval_golos_wer.py {gigaam|qwen3|parakeet|compare}`; зависимости
+  eval (datasets, jiwer, num2words, soundfile) стоят в scratch-venv `/tmp/mlxstt-venv`
+  и `/tmp/parakeet-venv` (временные, при пересборке переустановить). Гипотезы прошлых
+  прогонов: `/tmp/golos_hyps_*.json` (volatile).
+- Ловушка mlx 0.32.x: eval графа, задевающего CPU-stream (Parakeet), из не-главного
+  потока падает с «There is no Stream(cpu, N)». Лечится только инференсом в одном
+  выделенном потоке (загрузка весов тоже в нём). На mlx 0.31.x этой проблемы нет, но
+  там сегфолтит параллельный тест GigaAM (`test_mlx_parallel`) - остаёмся на 0.32.x.
+- int8-веса sonic-speech читаются только кастомным загрузчиком: `from_config` +
+  `nn.quantize(model.encoder, bits=8, group_size=64)` + `load_weights` (реализовано в
+  `src/asr/parakeet_mlx.py::_load_int8`).
+- Замеры для документации уже есть в `docs/benchmarks.md`, раздел «Сторонние модели»:
+  Parakeet 3.99% WER, 72x realtime (int8: 4.05%, 125x на длинных файлах); CPU-резерв
+  (onnx-asr GigaAM int8) 67-75x в докере; faster-whisper turbo int8 19x; Qwen3-ASR 15% -
+  как основная модель отброшена.
+
 ## Ближайшие задачи
 
 Порядок по соотношению «польза / стоимость». Для каждого пункта указано, что добавляется

@@ -87,6 +87,35 @@ GPU-исполнение сериализует рантайм. `--no-lock-free`
 **Декод аудио.** AVFoundation тянет wav/mp3/m4a/aac/flac/caf нативно; для ogg/opus/webm и
 видео есть fallback на ffmpeg. Ogg через ffmpeg - 0.13s на 137s аудио, не узкое место.
 
+## Parakeet TDT v3
+
+Вторая архитектура рядом с GigaAM - NVIDIA Parakeet-TDT-v3 (600M, 25 европейских языков,
+rel_pos attention вместо RoPE, субсэмплинг x8, TDT-декод с duration-головой). Порт
+`parakeet_mlx` с Python; текст совпадает с ним побуквенно на одном чанке, включая файл
+137s целиком (`--max-chunk-sec 200`).
+
+```
+Parakeet.swift        FastConformer-энкодер, TDT predictor/joint, greedy-декод
+ParakeetFeatures.swift  log-mel (преэмфаза, reflect-паддинг, |re|+|im| магнитуда) и rel_pos attention
+ParakeetTranscriber.swift  ASREngine: чанкинг, bucket-padding, слова из piece'ов
+```
+
+Веса - `data/parakeet_tdt_v3/` (weights bf16 + filterbanks librosa + vocab), готовит
+`scripts/convert_parakeet_to_mlx_swift.py`. Запуск:
+
+```bash
+swift/.build/release/oaitt-swift transcribe file.wav --parakeet-dir data/parakeet_tdt_v3
+swift/.build/release/oaitt-swift serve --parakeet-dir data/parakeet_tdt_v3 --port 8301
+```
+
+`verbose_json` отдаёт `words` с границами и вероятностью (у Parakeet они есть из коробки,
+у GigaAM - нет). Скорость - 122.7x realtime против 72x у Python (`parakeet-mlx`),
+внутри процесса не масштабируется так же, как GigaAM. Память - около 1.2 GB GPU.
+Два урока порта, важные для следующих моделей: python-списки модулей разворачиваются в
+массивы на стороне весов (ключи "conv.2" в дереве модулей не работают - нужен массив с
+nil на местах активаций), а константы вроде PE-таблицы нельзя держать в Module, иначе
+`verify(.all)` требует их в чекпойнте.
+
 ## Приложение
 
 `./build-app.sh` собирает `OAITT.app` - приложение в строке меню, которое держит пул
@@ -100,5 +129,6 @@ GPU-исполнение сериализует рантайм. `--no-lock-free`
   только процессами: 144 -> 263 -> 369x на 1/2/4 процессах. Причина - сериализация в
   MLX Swift; per-stream параллелизм недоступен, слои не пробрасывают `stream`, всё идёт в
   default stream, а `using(stream:)` в API нет, только `using(device:)`.
-- Нет: word timestamps, multilingual-моделей. Пул воркеров есть только на уровне
+- Нет: multilingual-модели. Word timestamps есть только у Parakeet; у GigaAM их не
+  достать - модель их не отдаёт. Пул воркеров есть только на уровне
   процессов - приложение поднимает их само ([macos-app.md](macos-app.md)).

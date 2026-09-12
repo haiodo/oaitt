@@ -27,6 +27,8 @@ KNOWN_MODELS: Dict[str, tuple] = {
     "gigaam-rnnt": ("gigaam_mlx", "rnnt"),
     "gigaam-multilingual-int8": ("gigaam_multilingual_mlx", "int8"),
     "gigaam-multilingual-fp16": ("gigaam_multilingual_mlx", "fp16"),
+    "parakeet-tdt-v3": ("parakeet_mlx", "fp16"),
+    "parakeet-tdt-v3-int8": ("parakeet_mlx", "int8"),
 }
 
 
@@ -40,6 +42,11 @@ def _build(engine: str, argument: Optional[str]) -> "ASRModel":
         from src.asr.gigaam_multilingual_mlx import GigaAMMultilingualMLXASR
 
         return GigaAMMultilingualMLXASR(variant=argument)
+
+    if engine == "parakeet_mlx":
+        from src.asr.parakeet_mlx import ParakeetMLXASR
+
+        return ParakeetMLXASR(variant=argument)
 
     from src.asr.factory import create_asr_model
 

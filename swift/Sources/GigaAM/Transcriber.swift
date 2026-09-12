@@ -6,6 +6,15 @@ public struct Segment: Codable, Sendable, Equatable {
     public let start: Double
     public let end: Double
     public let text: String
+    /// Word timestamps; only Parakeet produces them, GigaAM leaves this empty.
+    public var words: [ParakeetWord]?
+
+    public init(start: Double, end: Double, text: String, words: [ParakeetWord]? = nil) {
+        self.start = start
+        self.end = end
+        self.text = text
+        self.words = words
+    }
 }
 
 public final class GigaAMTranscriber: ASREngine, @unchecked Sendable {

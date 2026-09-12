@@ -13,7 +13,7 @@ English: [README.en.md](README.en.md)
 |---|---|---|
 | Где работает | macOS, Linux, Docker | только Apple Silicon |
 | Установка | `make prepare && make run` | скачать `.app`, 75 МБ |
-| Движки | GigaAM (PyTorch и MLX), multilingual, Whisper, WhisperX | GigaAM MLX, CTC и RNNT |
+| Движки | GigaAM (PyTorch и MLX), multilingual, Parakeet, Whisper, WhisperX | GigaAM MLX (CTC и RNNT), Parakeet TDT v3 |
 | Порт и токен | 9007, `key` | 9007, `key` - те же |
 | Документация | [`docs/python-service.md`](docs/python-service.md) | [`docs/macos-app.md`](docs/macos-app.md) |
 
@@ -45,7 +45,7 @@ curl -X POST http://localhost:9007/v1/audio/transcriptions \
 
 ## Возможности
 
-- **Восемь ASR движков**: GigaAM Native, GigaAM MLX, GigaAM Swift (CTC и RNNT), GigaAM Multilingual MLX (Apple Silicon), GigaAM via HF, Hugging Face Transformers и WhisperX
+- **Девять ASR движков**: GigaAM Native, GigaAM MLX, GigaAM Swift (CTC и RNNT), GigaAM Multilingual MLX (Apple Silicon), Parakeet TDT v3 (25 языков, word timestamps), GigaAM via HF, Hugging Face Transformers и WhisperX
 - **Пять языков**: GigaAM Multilingual - русский, английский, казахский, киргизский, узбекский.
   WER на FLEURS: 3.0% русский, 4.4% казахский, 5.6% киргизский, 7.3% узбекский
 - **OpenAI-совместимый API**: Drop-in замена для OpenAI Whisper API

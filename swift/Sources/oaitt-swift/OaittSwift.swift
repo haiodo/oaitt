@@ -22,6 +22,15 @@ struct ModelOptions: ParsableArguments {
     @Option(name: .long, help: "Model variant: ctc or rnnt.")
     var modelType: GigaAMModelType = .ctc
 
+    /// Non-empty switches the whole service to Parakeet TDT v3
+    /// (weights.safetensors + filterbanks.safetensors + vocab.txt, see
+    /// scripts/convert_parakeet_to_mlx_swift.py).
+    @Option(name: .long, help: "Directory with converted Parakeet TDT v3 weights.")
+    var parakeetDir = ""
+
+    @Option(help: "Max chunk length before splitting, seconds.")
+    var maxChunkSec = 20.0
+
     @Flag(
         inversion: .prefixedNo,
         help: "Run chunks without a model lock so parallel requests overlap.")
@@ -73,7 +82,12 @@ struct ModelOptions: ParsableArguments {
         }
     }
 
-    func makeTranscriber() throws -> GigaAMTranscriber {
+    func makeTranscriber() throws -> any ASREngine {
+        if !parakeetDir.isEmpty {
+            return try ParakeetTranscriber(
+                modelDir: URL(fileURLWithPath: parakeetDir), padBucketSec: padBucketSec,
+                idleTimeout: idleTimeout, maxChunkSec: maxChunkSec)
+        }
         let dir = URL(fileURLWithPath: modelCacheDir).appendingPathComponent(modelType.rawValue)
         return try GigaAMTranscriber(
             modelDir: dir, modelType: modelType, lockFree: lockFree, padBucketSec: padBucketSec,
@@ -106,12 +120,13 @@ struct ModelOptions: ParsableArguments {
                 directory: directory))
     }
 
-    func makeRegistry(fallback: GigaAMTranscriber) -> ModelRegistry {
+    func makeRegistry(fallback: any ASREngine, parakeet: (any ASREngine)? = nil) -> ModelRegistry {
         ModelRegistry(
             names: models.split(separator: ",").map {
                 $0.trimmingCharacters(in: .whitespaces).lowercased()
             },
             fallback: fallback, modelCacheDir: URL(fileURLWithPath: modelCacheDir),
+            parakeet: parakeet,
             lockFree: lockFree, padBucketSec: padBucketSec, idleTimeout: idleTimeout)
     }
 }
@@ -136,7 +151,8 @@ struct Serve: AsyncParsableCommand {
         model.applyMemoryLimits()
 
         let transcriber = try model.makeTranscriber()
-        let registry = model.makeRegistry(fallback: transcriber)
+        let parakeet = model.parakeetDir.isEmpty ? nil : transcriber
+        let registry = model.makeRegistry(fallback: transcriber, parakeet: parakeet)
         let modelType = model.modelType
         let token = apiKey
         let confidenceFilter = confidenceFilter
@@ -164,7 +180,7 @@ struct Serve: AsyncParsableCommand {
 
     /// Everything the routes need, assembled once at startup.
     struct Context {
-        let transcriber: GigaAMTranscriber
+        let transcriber: any ASREngine
         let registry: ModelRegistry
         let cache: ResultCache
         let telemetry: Telemetry?
@@ -181,14 +197,13 @@ struct Serve: AsyncParsableCommand {
         let transcriber = context.transcriber
         let cache = context.cache
         let telemetry = context.telemetry
-        let modelType = context.modelType
 
         router.get("/health") { _, _ -> Response in
             let memory = MemoryStats.current()
             let payload: [String: Any] = [
                 "status": "healthy",
                 "engine": "gigaam_mlx_swift",
-                "model_type": modelType.rawValue,
+                "model_type": transcriber.name,
                 "lock_free": transcriber.lockFree,
                 "memory": [
                     "process_memory_mb": round(memory.processMemoryMB * 10) / 10,
@@ -212,7 +227,7 @@ struct Serve: AsyncParsableCommand {
             ]
             payload["model"] =
                 [
-                    "type": modelType.rawValue,
+                    "type": transcriber.name,
                     "loaded": transcriber.isLoaded,
                     "idle_timeout": transcriber.idleTimeout,
                     "lock_free": transcriber.lockFree,
@@ -391,6 +406,13 @@ struct Serve: AsyncParsableCommand {
                 },
                 "confidence": confidence.json,
             ]
+            let words = outSegments.flatMap { $0.words ?? [] }
+            if !words.isEmpty {
+                payload["words"] = words.map {
+                    ["word": $0.word, "start": $0.start, "end": $0.end, "prob": $0.probability]
+                        as [String: Any]
+                }
+            }
             if let rate = confidence.charsPerSecond { payload["chars_per_second"] = rate }
             return json(payload)
         default:

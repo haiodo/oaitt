@@ -44,5 +44,9 @@ mlx>=0.20.0; sys_platform == 'darwin' and platform_machine == 'arm64'
 # VAD-чанкования) не работает на numpy >= 2.5 - оба MLX-движка падают с
 # "Numba needs NumPy 2.4 or less".
 gigaam-multilingual-mlx; sys_platform == 'darwin' and platform_machine == 'arm64'
+
+# Parakeet-TDT-v3 engine (Apple Silicon only, weights from HuggingFace).
+# Только mlx/numpy/librosa - без PyTorch.
+parakeet-mlx; sys_platform == 'darwin' and platform_machine == 'arm64'
 mlx[cpu]>=0.20.0; sys_platform == 'linux'
 huggingface_hub

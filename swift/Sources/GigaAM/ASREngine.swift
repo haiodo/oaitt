@@ -16,6 +16,12 @@ public protocol ASREngine: AnyObject, Sendable {
     /// Seconds of inactivity after which weights are dropped; 0 keeps them loaded.
     var idleTimeout: TimeInterval { get }
 
+    /// Parallel requests overlap on GPU without a model lock (both engines: true).
+    var lockFree: Bool { get }
+
+    /// Chunk length bucketing step reported in /health/detailed.
+    var padBucketSec: Double { get }
+
     func transcribe(audio: [Float], maxChunkSec: Double) -> [Segment]
 
     /// Drops the weights and the MLX buffer cache.
