@@ -1,3 +1,5 @@
+
+
 # OAITT - Open AI Transformer Transcriber
 
 **Сервис распознавания речи на GigaAM с OpenAI-совместимым API.**
@@ -75,7 +77,7 @@ Swift быстрее на одном запросе и держит куда б�
 масштабируется, поэтому пропускная способность там набирается процессами: 144x, 263x, 369x
 на одном, двух и четырёх.
 
-Качество на Golos после нормализации чисел: **4.38% WER** у RNNT, **5.08%** у CTC.
+Качество на Golos после прописи чисел и исключения записей с латиницей: **4.38% WER** у RNNT, **5.08%** у CTC.
 
 Полные замеры, включая проверенные и отвергнутые идеи - [`docs/benchmarks.md`](docs/benchmarks.md).
 
@@ -138,4 +140,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
   Copyright (c) 2025 Andrey Sobolev (haiodo@gmail.com)<br>
   Made with for the speech recognition community
 </p>
-
