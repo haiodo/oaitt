@@ -17,7 +17,7 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
     public var name: String { "parakeet-tdt-v3" }
     /// Single inference stream per process, same as the Python engine on mlx 0.32.x.
     public let lockFree = true
-    public let padBucketSec: Double
+    public var padBucketSec: Double { 0 }
     public let idleTimeout: TimeInterval
     let maxChunkSec: Double
 
@@ -29,11 +29,10 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
     public var isLoaded: Bool { loadLock.withLock { model != nil } }
 
     public init(
-        modelDir: URL, padBucketSec: Double = 1.0, idleTimeout: TimeInterval = 0,
+        modelDir: URL, idleTimeout: TimeInterval = 0,
         maxChunkSec: Double = 20.0
     ) throws {
         self.modelDir = modelDir
-        self.padBucketSec = padBucketSec
         self.idleTimeout = idleTimeout
         self.maxChunkSec = maxChunkSec
 
@@ -102,30 +101,22 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
     }
 
     public func transcribe(audio: [Float], maxChunkSec chunkOverride: Double) -> [Segment] {
-        let chunk = chunkOverride > 0 ? chunkOverride : self.maxChunkSec
+        let resolvedChunkSec = chunkOverride > 0 ? chunkOverride : self.maxChunkSec
         let sr = Double(ParakeetMel.sampleRate)
-        let maxSamples = Int(chunk * sr)
-        let bucketSamples = padBucketSec > 0 ? Int(padBucketSec * sr) : 0
 
         loadLock.withLock { lastActivity = Date() }
         guard let model = try? loaded() else { return [] }
 
         var segments: [Segment] = []
-        for chunk in splitAudio(audio, maxChunkSec: maxChunkSec) {
-            var slice = Array(audio[chunk.startSample..<chunk.endSample])
+        for chunk in splitAudio(audio, maxChunkSec: resolvedChunkSec) {
+            // No bucket padding, unlike GigaAM: the per-feature mel normalization and
+            // unmasked attention see the padding, and Golos WER went from 3.99% to 4.41%.
+            let slice = Array(audio[chunk.startSample..<chunk.endSample])
             guard slice.count >= ParakeetMel.winLength else { continue }
-            let realCount = slice.count
-            if bucketSamples > 0 {
-                let target = min(
-                    maxSamples, (slice.count + bucketSamples - 1) / bucketSamples * bucketSamples)
-                if slice.count < target {
-                    slice.append(contentsOf: repeatElement(0, count: target - slice.count))
-                }
-            }
 
             let tokens = model.transcribeChunk(slice)
             let offset = Double(chunk.startSample) / sr
-            let realEnd = Double(realCount) / sr
+            let realEnd = Double(slice.count) / sr
             segments.append(
                 contentsOf: Self.segments(from: tokens, offset: offset, realEnd: realEnd))
         }
@@ -135,7 +126,7 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
     /// Groups tokens into sentences (punctuation rule from the Python port) and words
     /// (a piece starting with a space opens a word; probability = min over pieces).
     /// Token times are chunk-relative; `offset` places them on the file timeline and
-    /// `realEnd` cuts off anything the bucket padding might have produced.
+    /// `realEnd` keeps the last segment inside the chunk.
     static func segments(
         from tokens: [ParakeetToken], offset: Double, realEnd: Double
     ) -> [Segment] {

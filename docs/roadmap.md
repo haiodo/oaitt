@@ -93,16 +93,15 @@ FluidAudio - CoreML/ANE вместо MLX.
 
 - [x] `parakeet-mlx` 0.5.2 поставлен в venv проекта; API и типы результата проверены.
 - [x] `src/asr/parakeet_mlx.py`: класс `ParakeetMLXASR(variant fp16|int8)`, слова из
-  токенов (граница - ведущий пробел piece'а, probability = min), окна 120s/15s для
-  длинных файлов, инференс в выделенном потоке.
+  токенов (граница - ведущий пробел piece'а, probability = min), нарезка по паузам до
+  20s (окна 120s/15s теряли речь - см. ревизию ниже), инференс в выделенном потоке.
 - [x] Регистрация: `factory.py` (`parakeet_mlx`), `registry.py` (`parakeet-tdt-v3`,
   `parakeet-tdt-v3-int8`), `config.py` (`PARAKEET_*`), `requirements.txt`,
   лаунчер `run_parakeet_mlx.sh`, запись в `tests/test_benchmark.py`.
 - [x] Тесты: движок в `test_engine_output.py`; проверка непустых `words` с валидными
   границами в `verbose_json` (флаг `words: True` у записи движка).
 - [x] Верификация: `make check` зелёный; серверный тест движка зелёный; WER через код
-  сервиса: fp16 3.99% (совпало с прямым прогоном), int8 4.05%; int8 быстрее в 1.7 раза
-  на длинных файлах (125x против 72x), но медленнее на коротких чанках - дефолт fp16.
+  сервиса: fp16 3.99% (совпало с прямым прогоном), int8 4.05%; дефолт fp16.
 - [x] Доки: `python-service.md`, `readme.md`, `benchmarks.md`.
 - Этап 1 закрыт. Этап 2 (Swift-порт) - следующий.
 
@@ -116,12 +115,23 @@ FluidAudio - CoreML/ANE вместо MLX.
 - [x] Интеграция: `--parakeet-dir` в CLI (transcribe/serve/bench), Registry
   (`parakeet-tdt-v3`), `verbose_json` с `words`, `Segment.words`.
 - [x] Верификация: текст побуквенно совпадает с Python `parakeet-mlx` на 10s и на
-  137.4s одним чанком (`--max-chunk-sec 200`); `make check` зелёный; bench 122.7x
-  (Python 72x); серверный тест: words в ответе; 20 запросов - память плоская.
+  137.4s одним чанком (`--max-chunk-sec 200`); `make check` зелёный; серверный тест:
+  words в ответе; 20 запросов - память плоская.
 - [ ] Приложение: воркер Parakeet в Supervisor/ModelDownloader (CLI и сервер готовы).
 - [ ] Батчевый декод чанков (сейчас чанк за чанком; у TDT для этого есть duration-джампы).
 
 Этап 2 по сервису и CLI закрыт. Уроки порта зафиксированы в [swift-port.md](swift-port.md).
+
+### Ревизия 2026-09-22 (перепроверка замеров и ревью)
+
+- [x] Swift: bucket-padding давал WER 4.41% вместо 3.99% (38/391 записей расходились с
+  Python); паддинг для Parakeet выключен - 391/391 совпадают, скорость 144x.
+- [x] Python: окна 120s теряли ~140s речи на часовом митинге; нарезка по паузам до 20s
+  (`split_audio_smart`), аудио в модель массивом - ffmpeg больше не нужен.
+- [x] Python: `ensure_model_loaded` реально грузит модель при старте (раньше - на
+  первом запросе, `/health` врал `model_loaded=false`, память не учитывалась).
+- [x] Скорость перемерена: Python ~128x (не 72x), int8 = fp16 по скорости (не +70%),
+  Swift быстрее Python на ~10% (не в 1.7 раза). Цифры в [benchmarks.md](benchmarks.md).
 
 ### Контекст для продолжения (достаточно для новой сессии)
 
@@ -143,7 +153,7 @@ FluidAudio - CoreML/ANE вместо MLX.
   `nn.quantize(model.encoder, bits=8, group_size=64)` + `load_weights` (реализовано в
   `src/asr/parakeet_mlx.py::_load_int8`).
 - Замеры для документации уже есть в `docs/benchmarks.md`, раздел «Сторонние модели»:
-  Parakeet 3.99% WER, 72x realtime (int8: 4.05%, 125x на длинных файлах); CPU-резерв
+  Parakeet 3.99% WER, ~128x realtime Python, 144x Swift (int8: 4.05%, та же скорость); CPU-резерв
   (onnx-asr GigaAM int8) 67-75x в докере; faster-whisper turbo int8 19x; Qwen3-ASR 15% -
   как основная модель отброшена.
 

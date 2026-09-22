@@ -11,10 +11,8 @@
 #
 # Env vars:
 #   PARAKEET_VARIANT=fp16|int8     - weights variant (default: fp16).
-#                                    int8 = sonic-speech quantized encoder, +30% speed.
-#   PARAKEET_CHUNK_SEC=120.0       - window length for long files
-#   PARAKEET_OVERLAP_SEC=15.0      - overlap between windows
-#   PARAKEET_MLX_LOCK_FREE=true    - in-process lock-free threading
+#                                    int8 = sonic-speech quantized encoder, ~0.75 GB vs ~1.2 GB.
+#   PARAKEET_CHUNK_SEC=20.0        - max chunk length, long audio is split at pauses
 #   PARAKEET_REPO_ID=<repo>        - custom HF repo or local weights dir
 #   MODEL_WORKERS=N                - parallel model instances (default: 1)
 #

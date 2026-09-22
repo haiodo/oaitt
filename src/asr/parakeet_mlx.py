@@ -5,10 +5,10 @@ ASR реализация для Parakeet-TDT-v3 (NVIDIA, 25 европейски
 `parakeet_mlx` с PyPI. Не требует PyTorch, работает только на Apple Silicon.
 
 Особенности:
-- ~72x realtime на M4 Max
+- ~130x realtime на M4 Max
 - WER на Golos (общий набор) 3.99% - лучше GigaAM RNNT (6.69%)
 - Word-level timestamps и пер-токенная confidence из коробки
-- Длинное аудио - окнами с перекрытием (120s/15s по умолчанию)
+- Длинное аудио режется по паузам на куски до 20s, как у GigaAM
 
 Важно: все MLX-вызовы идут через один выделенный поток. В mlx 0.32.x eval графа,
 задевающего CPU-stream (как у Parakeet), из не-главного потока падает с
@@ -22,7 +22,6 @@ Licensed under MIT License.
 import logging
 import os
 import queue
-import tempfile
 import threading
 from typing import List, Optional, Union
 
@@ -33,12 +32,13 @@ from src.config import (
     MODEL_CACHE_DIR,
     MODEL_IDLE_TIMEOUT,
     PARAKEET_CHUNK_SEC,
-    PARAKEET_OVERLAP_SEC,
     PARAKEET_REPO_ID,
     PARAKEET_REPO_ID_INT8,
 )
 from src.models.schemas import Segment, TranscriptionResponse, WordTimestamp
 from src.utils.audio import get_audio_duration, normalize_audio
+from src.utils.chunking import split_audio_smart
+from src.utils.device import get_process_memory_mb
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class ParakeetMLXASR(ASRModel):
 
     Поддерживаемые variant:
     - "fp16" (по умолчанию) - mlx-community/parakeet-tdt-0.6b-v3
-    - "int8" - sonic-speech/parakeet-tdt-0.6b-v3-int8, +30% скорости
+    - "int8" - sonic-speech/parakeet-tdt-0.6b-v3-int8, веса ~0.75 GB против ~1.2 GB, скорость та же
     """
 
     def __init__(self, variant: Optional[str] = None) -> None:
@@ -127,13 +127,15 @@ class ParakeetMLXASR(ASRModel):
     def _worker_loop(self) -> None:
         self._worker_ready.set()
         while True:
-            audio, duration, done, holder = self._jobs.get()
+            audio, done, holder = self._jobs.get()
             try:
                 with self.model_lock:
                     if self.model is None:
                         self.load_model()
                     model = self.model
-                holder["result"] = self._run_transcribe(model, audio, duration)
+                # audio=None - задание только на загрузку (ensure_model_loaded)
+                if audio is not None:
+                    holder["result"] = self._run_transcribe(model, audio)
             except Exception as e:  # noqa: BLE001 - наверх уходит исключение запроса
                 logger.exception("Parakeet inference failed")
                 holder["error"] = e
@@ -150,6 +152,21 @@ class ParakeetMLXASR(ASRModel):
         выделенном потоке.
         """
         self._start_worker()
+        if self.is_loaded():
+            return
+
+        self._baseline_memory_mb = get_process_memory_mb()
+        done = threading.Event()
+        holder: dict = {}
+        self._jobs.put((None, done, holder))
+        done.wait()
+        if "error" in holder:
+            raise holder["error"]
+
+        current_memory = get_process_memory_mb()
+        if self._baseline_memory_mb > 0 and current_memory > 0:
+            self._model_memory_mb = current_memory - self._baseline_memory_mb
+            logger.info(f"Model loaded, using {self._model_memory_mb:.1f} MB memory")
 
     def load_model(self) -> None:
         """Загружает Parakeet модель. Вызывается в потоке инференса."""
@@ -231,7 +248,7 @@ class ParakeetMLXASR(ASRModel):
 
         done = threading.Event()
         holder: dict = {}
-        self._jobs.put((audio, duration, done, holder))
+        self._jobs.put((audio, done, holder))
         done.wait()
 
         if "error" in holder:
@@ -240,30 +257,25 @@ class ParakeetMLXASR(ASRModel):
 
     # --------------------------------------------------------------- inference
 
-    def _run_transcribe(self, model, audio: np.ndarray, duration: float):
-        """Прогоняет аудио через модель; короткое - целиком, длинное - окнами."""
-        import soundfile as sf
+    def _run_transcribe(self, model, audio: np.ndarray):
+        """Режет аудио по паузам и склеивает токены кусков со сдвигом по времени.
 
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                sf.write(tmp, audio, 16000, subtype="PCM_16")
-                tmp_path = tmp.name
+        Окна parakeet-mlx по 120s теряли речь: на части длинных окон модель
+        отдаёт пустой результат (на митинге пропало ~140s подряд).
+        """
+        import mlx.core as mx
+        from parakeet_mlx.alignment import sentences_to_result, tokens_to_sentences
+        from parakeet_mlx.audio import get_logmel
 
-            # Короткие чанки митингов идут целиком: оконный режим на них только
-            # добавляет перекрытие и лишние проходы энкодера.
-            chunk_duration = PARAKEET_CHUNK_SEC if duration > PARAKEET_CHUNK_SEC else None
-            return model.transcribe(
-                tmp_path,
-                chunk_duration=chunk_duration,
-                overlap_duration=PARAKEET_OVERLAP_SEC,
-            )
-        finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+        tokens = []
+        for chunk, start, _ in split_audio_smart(audio, PARAKEET_CHUNK_SEC):
+            mel = get_logmel(mx.array(chunk), model.preprocessor_config)
+            result = model.generate(mel)[0]
+            for tok in result.tokens:
+                tok.start += start
+                tok.end = tok.start + tok.duration
+            tokens.extend(result.tokens)
+        return sentences_to_result(tokens_to_sentences(tokens))
 
     def _format_result(self, result, duration: float, output: str) -> Union[TranscriptionResponse, str]:
         """Собирает TranscriptionResponse из AlignedResult."""

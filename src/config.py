@@ -59,13 +59,12 @@ GIGAAM_MLX_CHUNK_SEC = float(os.getenv("GIGAAM_MLX_CHUNK_SEC", "20.0"))
 
 # Parakeet-TDT-v3 configuration (Apple Silicon native MLX, parakeet-mlx package).
 # fp16 - mlx-community/parakeet-tdt-0.6b-v3 (~1.2 GB), int8 - sonic-speech quantized
-# encoder (+30% speed, zero WER degradation claimed). 25 European languages.
+# encoder (~0.75 GB vs ~1.2 GB, same speed, WER 4.05% vs 3.99%). 25 European languages.
 PARAKEET_REPO_ID = os.getenv("PARAKEET_REPO_ID", "mlx-community/parakeet-tdt-0.6b-v3")
 PARAKEET_REPO_ID_INT8 = os.getenv("PARAKEET_REPO_ID_INT8", "sonic-speech/parakeet-tdt-0.6b-v3-int8")
-# Long audio windows: files longer than CHUNK_SEC go through in windows with overlap,
-# matching the parakeet-mlx CLI defaults.
-PARAKEET_CHUNK_SEC = float(os.getenv("PARAKEET_CHUNK_SEC", "120.0"))
-PARAKEET_OVERLAP_SEC = float(os.getenv("PARAKEET_OVERLAP_SEC", "15.0"))
+# Long audio is split at pauses into chunks up to CHUNK_SEC. The parakeet-mlx 120s
+# windows dropped whole stretches of meeting speech.
+PARAKEET_CHUNK_SEC = float(os.getenv("PARAKEET_CHUNK_SEC", "20.0"))
 
 # Device to use: "auto", "cuda", "cpu", "mps"
 DEVICE = os.getenv("DEVICE", "auto")

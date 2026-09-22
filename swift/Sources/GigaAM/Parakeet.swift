@@ -131,19 +131,6 @@ class ParakeetSubsampling: Module {
         return f
     }
 
-    /// Frames of encoder output produced by `samples` raw audio samples (x8 subsampling).
-    /// Mel frames: padded length (samples + 2*(nFFT/2)) windowed by 400 with hop 160.
-    static func outputFrames(samples: Int) -> Int {
-        var t = max(
-            0,
-            (samples + 2 * ParakeetMel.reflectPad - ParakeetMel.winLength
-                + ParakeetMel.hopLength) / ParakeetMel.hopLength)
-        for _ in 0..<3 {
-            t = (t - 1) / 2 + 1
-        }
-        return max(1, t)
-    }
-
     func callAsFunction(_ x: MLXArray, lengths: MLXArray) -> (MLXArray, MLXArray) {
         // x: (B, T, featIn) -> (B, T, F, 1) NHWC as the Python port lays it out.
         var y = x.expandedDimensions(axis: 3)  // (B, H=T, W=F, C=1)
@@ -278,10 +265,10 @@ class ParakeetJoint: Module {
         self._jointNet.wrappedValue = [nil, nil, Linear(640, 8198)]
     }
 
-    /// enc: (1, 1, 1024), pred: (1, 1, 640). Returns (1, 1, 1, 8198) logits.
-    func callAsFunction(_ encState: MLXArray, _ predState: MLXArray) -> MLXArray {
-        let e = enc(encState)
-        let p = pred(predState)
+    /// e: enc-projected frame (1, 1, 640), p: pred-projected decoder output (1, 1, 640).
+    /// Projections are applied by the caller so they are not recomputed every step.
+    /// Returns (1, 1, 1, 8198) logits.
+    func callAsFunction(_ e: MLXArray, _ p: MLXArray) -> MLXArray {
         let x = e.expandedDimensions(axis: 2) + p.expandedDimensions(axis: 1)
         return jointLinear(relu(x))
     }
@@ -341,24 +328,38 @@ class ParakeetTDTModel: Module {
         var step = 0
         var newSymbols = 0
         let vocabLimit = vocabulary.count + 1  // blank sits at index vocabulary.count
+        let maxEntropy = log(Float(vocabLimit))
+
+        let encProj = joint.enc(features)  // (1, T, 640)
+        eval(encProj)
+        // Blank keeps the decoder state, so its output is reused until a token is emitted.
+        var predProj: MLXArray?
+        var newState: ([MLXArray], [MLXArray])?
 
         while step < seqLen {
-            let frame = features[0..., step..<(step + 1), 0...]  // (1, 1, 1024)
-            let (decoderOut, newState) = decoder(lastToken, state: state)
-            let logits = joint(frame, decoderOut)  // (1, 1, 1, 8198)
-            eval(logits)
+            let proj: MLXArray
+            if let cached = predProj {
+                proj = cached
+            } else {
+                let (decoderOut, next) = decoder(lastToken, state: state)
+                proj = joint.pred(decoderOut)
+                predProj = proj
+                newState = next
+            }
+            let logits = joint(encProj[0..., step..<(step + 1), 0...], proj)
 
             let row = logits[0, 0, 0, 0...]
             let tokenLogits = row[..<vocabLimit]
-            let predToken = Int(MLX.argMax(tokenLogits, axis: -1).item(Int32.self))
-
             let probs = MLX.softmax(tokenLogits, axis: -1)
-            let entropy = -MLX.sum(probs * MLX.log(probs + 1e-10), axis: -1).item(Float.self)
-            let maxEntropy = log(Float(vocabLimit))
-            let confidence = 1.0 - entropy / maxEntropy
+            let tokenArr = MLX.argMax(tokenLogits, axis: -1)
+            let entropyArr = -MLX.sum(probs * MLX.log(probs + 1e-10), axis: -1)
+            let decisionArr = MLX.argMax(row[vocabLimit...], axis: -1)
+            // The LSTM state rides along so its lazy graph does not grow token to token.
+            eval([tokenArr, entropyArr, decisionArr] + (newState.map { $0.0 + $0.1 } ?? []))
 
-            let durationsLogits = row[vocabLimit...]
-            let decision = Int(MLX.argMax(durationsLogits, axis: -1).item(Int32.self))
+            let predToken = Int(tokenArr.item(Int32.self))
+            let confidence = 1.0 - entropyArr.item(Float.self) / maxEntropy
+            let decision = Int(decisionArr.item(Int32.self))
 
             // TDT rule: emit unless blank; advance time by the predicted duration.
             if predToken != vocabulary.count {
@@ -371,6 +372,7 @@ class ParakeetTDTModel: Module {
                         confidence: confidence))
                 lastToken = Int32(predToken)
                 state = newState
+                predProj = nil
             }
 
             step += durations[decision]

@@ -83,10 +83,13 @@ struct ModelOptions: ParsableArguments {
     }
 
     func makeTranscriber() throws -> any ASREngine {
+        // Every command goes through here; without the cap transcribe/bench on a long file
+        // grew the MLX buffer cache to 20+ GB (each unpadded chunk size is a new buffer).
+        applyMemoryLimits()
         if !parakeetDir.isEmpty {
             return try ParakeetTranscriber(
-                modelDir: URL(fileURLWithPath: parakeetDir), padBucketSec: padBucketSec,
-                idleTimeout: idleTimeout, maxChunkSec: maxChunkSec)
+                modelDir: URL(fileURLWithPath: parakeetDir), idleTimeout: idleTimeout,
+                maxChunkSec: maxChunkSec)
         }
         let dir = URL(fileURLWithPath: modelCacheDir).appendingPathComponent(modelType.rawValue)
         return try GigaAMTranscriber(
@@ -148,7 +151,6 @@ struct Serve: AsyncParsableCommand {
 
     func run() async throws {
         if model.exitWithParent { Self.exitWhenOrphaned() }
-        model.applyMemoryLimits()
 
         let transcriber = try model.makeTranscriber()
         let parakeet = model.parakeetDir.isEmpty ? nil : transcriber

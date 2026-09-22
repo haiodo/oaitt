@@ -16,7 +16,7 @@ struct Transcribe: ParsableCommand {
     func run() throws {
         let loadStart = Date()
         let transcriber = try model.makeTranscriber()
-        log("loaded \(model.modelType.rawValue) in \(elapsed(since: loadStart))")
+        log("loaded \(transcriber.name) in \(elapsed(since: loadStart))")
 
         let start = Date()
         let result = try transcriber.transcribe(url: URL(fileURLWithPath: input))

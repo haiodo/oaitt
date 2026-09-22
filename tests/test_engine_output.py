@@ -120,7 +120,7 @@ def check_response(result: dict, expect_words: bool = False) -> list[str]:
                     problems.append(f"word {i}: missing start/end")
                 elif w_end < w_start:
                     problems.append(f"word {i}: end {w_end} < start {w_start}")
-                prob = w.get("prob") or w.get("probability")
+                prob = w.get("prob", w.get("probability"))
                 if prob is not None and not (0.0 <= prob <= 1.0):
                     problems.append(f"word {i}: probability {prob} outside [0, 1]")
 

@@ -91,13 +91,13 @@ GPU-исполнение сериализует рантайм. `--no-lock-free`
 
 Вторая архитектура рядом с GigaAM - NVIDIA Parakeet-TDT-v3 (600M, 25 европейских языков,
 rel_pos attention вместо RoPE, субсэмплинг x8, TDT-декод с duration-головой). Порт
-`parakeet_mlx` с Python; текст совпадает с ним побуквенно на одном чанке, включая файл
-137s целиком (`--max-chunk-sec 200`).
+`parakeet_mlx` с Python; текст совпадает с ним побуквенно на одном чанке: 391/391 записей
+Golos, WER 3.99%, и файл 137s целиком (`--max-chunk-sec 200`).
 
 ```
 Parakeet.swift        FastConformer-энкодер, TDT predictor/joint, greedy-декод
 ParakeetFeatures.swift  log-mel (преэмфаза, reflect-паддинг, |re|+|im| магнитуда) и rel_pos attention
-ParakeetTranscriber.swift  ASREngine: чанкинг, bucket-padding, слова из piece'ов
+ParakeetTranscriber.swift  ASREngine: чанкинг без паддинга, слова из piece'ов
 ```
 
 Веса - `data/parakeet_tdt_v3/` (weights bf16 + filterbanks librosa + vocab), готовит
@@ -109,8 +109,10 @@ swift/.build/release/oaitt-swift serve --parakeet-dir data/parakeet_tdt_v3 --por
 ```
 
 `verbose_json` отдаёт `words` с границами и вероятностью (у Parakeet они есть из коробки,
-у GigaAM - нет). Скорость - 122.7x realtime против 72x у Python (`parakeet-mlx`),
+у GigaAM - нет). Скорость - 144x realtime против ~128x у Python (`parakeet-mlx`),
 внутри процесса не масштабируется так же, как GigaAM. Память - около 1.2 GB GPU.
+Bucket-padding, как у GigaAM, здесь выключен: per-feature нормализация мела и attention
+без маски видят нули, и WER растёт с 3.99% до 4.41% ([benchmarks.md](benchmarks.md)).
 Два урока порта, важные для следующих моделей: python-списки модулей разворачиваются в
 массивы на стороне весов (ключи "conv.2" в дереве модулей не работают - нужен массив с
 nil на местах активаций), а константы вроде PE-таблицы нельзя держать в Module, иначе

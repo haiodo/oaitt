@@ -177,11 +177,11 @@ def get_engine_info(engine: str | None = None) -> dict:
             ),
             "features": [
                 "Apple Silicon native (MLX framework)",
-                "~72x realtime",
+                "~130x realtime",
                 "WER 3.99% on Golos common subset - better than GigaAM (6.69%)",
                 "Word-level timestamps and per-token confidence built-in",
                 "English transliterated to Cyrillic (matches Russian references)",
-                "Long audio via 120s windows with 15s overlap",
+                "Long audio split at pauses into chunks up to 20s",
                 "No PyTorch dependency",
             ],
         },
