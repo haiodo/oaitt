@@ -66,6 +66,18 @@ PARAKEET_REPO_ID_INT8 = os.getenv("PARAKEET_REPO_ID_INT8", "sonic-speech/parakee
 # windows dropped whole stretches of meeting speech.
 PARAKEET_CHUNK_SEC = float(os.getenv("PARAKEET_CHUNK_SEC", "20.0"))
 
+# onnx-asr configuration (ONNX Runtime, CPU, no PyTorch/MLX - runs on every platform).
+# Model name from the onnx-asr registry, e.g. "gigaam-v3-e2e-rnnt" (default, punctuation),
+# "gigaam-v3-rnnt" (no punctuation, better WER), "nemo-parakeet-tdt-0.6b-v3" (25 languages).
+ONNX_ASR_MODEL = os.getenv("ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
+# "int8" (default) or "fp32" - fp32 disables quantization (quantization=None).
+ONNX_ASR_QUANTIZATION = os.getenv("ONNX_ASR_QUANTIZATION", "int8")
+# Local directory with pre-downloaded weights (empty = download from HuggingFace).
+ONNX_ASR_MODEL_DIR = os.getenv("ONNX_ASR_MODEL_DIR", "") or None
+# Long audio is split at pauses into chunks up to CHUNK_SEC - whole-file inference
+# truncates the result, the models are trained on short audio.
+ONNX_ASR_CHUNK_SEC = float(os.getenv("ONNX_ASR_CHUNK_SEC", "20.0"))
+
 # Device to use: "auto", "cuda", "cpu", "mps"
 DEVICE = os.getenv("DEVICE", "auto")
 

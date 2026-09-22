@@ -1,0 +1,69 @@
+# Dockerfile for OAITT with the onnx-asr engine (ONNX Runtime, CPU only).
+# No PyTorch, no MLX - builds for linux/amd64 and linux/arm64 alike.
+# GigaAM v3 E2E RNNT int8 weights are baked in at build time (no network at runtime).
+#
+# Build:
+#   docker build -f Dockerfile.onnx -t oaitt-onnx:cpu .
+# Run:
+#   docker run --network none -p 9007:9007 oaitt-onnx:cpu
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEVICE=cpu \
+    ASR_ENGINE=onnx_asr \
+    ONNX_ASR_MODEL=gigaam-v3-e2e-rnnt \
+    ONNX_ASR_QUANTIZATION=int8 \
+    ONNX_ASR_MODEL_DIR=/app/data/onnx
+
+# libsndfile1: soundfile/librosa. libgomp1: onnxruntime/numba threading.
+# ffmpeg не нужен - webm/mp4/ogg декодируются in-process через PyAV (libav в wheel).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Аудио-стек, который реально импортирует src/utils/audio.py, плюс сам движок.
+RUN pip install --no-cache-dir \
+    numpy \
+    soundfile \
+    librosa \
+    "av>=13.0.0" \
+    "onnx-asr[cpu,hub]"
+
+# Web framework.
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    pydantic \
+    python-multipart \
+    psutil
+
+# Веса GigaAM v3 E2E RNNT (int8) - ровно то, что читает onnx_asr.load_model офлайн:
+# конфиг, encoder/decoder/joint и словарь. Остальные файлы репозитория (fp32, другие
+# варианты модели) не нужны и не скачиваются.
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+files = ['config.json', 'v3_e2e_rnnt_encoder.int8.onnx', 'v3_e2e_rnnt_decoder.int8.onnx', 'v3_e2e_rnnt_joint.int8.onnx', 'v3_e2e_rnnt_vocab.txt']; \
+[hf_hub_download('istupakov/gigaam-v3-onnx', f, local_dir='/app/data/onnx') for f in files]"
+
+# Веса уже в образе - на рантайме сеть не нужна и не используется (local_dir + offline).
+ENV HF_HUB_OFFLINE=1
+
+# App code.
+COPY src/ /app/src/
+COPY main.py /app/
+
+RUN mkdir -p /app/data && chmod -R 755 /app/data
+
+EXPOSE 9007
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9007/health')" || exit 1
+
+CMD ["python", "main.py"]

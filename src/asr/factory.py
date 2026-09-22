@@ -27,6 +27,7 @@ SUPPORTED_ENGINES = {
     "gigaam_mlx": "GigaAMMLXASR",
     "gigaam_multilingual_mlx": "GigaAMMultilingualMLXASR",
     "parakeet_mlx": "ParakeetMLXASR",
+    "onnx_asr": "OnnxASR",
 }
 
 
@@ -83,6 +84,11 @@ def create_asr_model() -> "ASRModel":
         from src.asr.parakeet_mlx import ParakeetMLXASR
 
         return ParakeetMLXASR()
+
+    elif engine == "onnx_asr":
+        from src.asr.onnx_asr import OnnxASR
+
+        return OnnxASR()
 
     else:
         supported = ", ".join(f"'{e}'" for e in SUPPORTED_ENGINES.keys())
@@ -177,11 +183,25 @@ def get_engine_info(engine: str | None = None) -> dict:
             ),
             "features": [
                 "Apple Silicon native (MLX framework)",
-                "~130x realtime",
+                "~140x realtime",
                 "WER 3.99% on Golos common subset - better than GigaAM (6.69%)",
                 "Word-level timestamps and per-token confidence built-in",
                 "English transliterated to Cyrillic (matches Russian references)",
                 "Long audio split at pauses into chunks up to 20s",
+                "No PyTorch dependency",
+            ],
+        },
+        "onnx_asr": {
+            "name": "onnx_asr",
+            "class": "OnnxASR",
+            "description": "onnx-asr (ONNX Runtime, CPU) - GigaAM/Parakeet weights, no PyTorch/MLX",
+            "features": [
+                "Runs on any platform (x86_64/arm64, Linux/macOS/Windows), CPU only",
+                "gigaam-v3-e2e-rnnt (default): punctuation + capitalization, WER 6.85% on Golos, ~41x realtime",
+                "gigaam-v3-rnnt: no punctuation, WER 2.18%, ~55x realtime",
+                "nemo-parakeet-tdt-0.6b-v3: 25 languages, WER 3.42%, int8 broken upstream - fp32 only",
+                "Word-level timestamps and per-token confidence",
+                "Long audio split at pauses into chunks (split_audio_smart)",
                 "No PyTorch dependency",
             ],
         },

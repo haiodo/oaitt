@@ -8,3 +8,4 @@ private_output
 logs
 *.log
 bench_results
+.build.last

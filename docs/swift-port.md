@@ -109,7 +109,7 @@ swift/.build/release/oaitt-swift serve --parakeet-dir data/parakeet_tdt_v3 --por
 ```
 
 `verbose_json` отдаёт `words` с границами и вероятностью (у Parakeet они есть из коробки,
-у GigaAM - нет). Скорость - 144x realtime против ~128x у Python (`parakeet-mlx`),
+у GigaAM - нет). Скорость - 185x realtime против ~140x у Python (`parakeet-mlx`),
 внутри процесса не масштабируется так же, как GigaAM. Память - около 1.2 GB GPU.
 Bucket-padding, как у GigaAM, здесь выключен: per-feature нормализация мела и attention
 без маски видят нули, и WER растёт с 3.99% до 4.41% ([benchmarks.md](benchmarks.md)).

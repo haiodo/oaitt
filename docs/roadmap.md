@@ -130,8 +130,11 @@ FluidAudio - CoreML/ANE вместо MLX.
   (`split_audio_smart`), аудио в модель массивом - ffmpeg больше не нужен.
 - [x] Python: `ensure_model_loaded` реально грузит модель при старте (раньше - на
   первом запросе, `/health` врал `model_loaded=false`, память не учитывалась).
-- [x] Скорость перемерена: Python ~128x (не 72x), int8 = fp16 по скорости (не +70%),
-  Swift быстрее Python на ~10% (не в 1.7 раза). Цифры в [benchmarks.md](benchmarks.md).
+- [x] Скорость перемерена: Python ~140x (не 72x), int8 быстрее fp16 на 9% (не на 70%),
+  Swift быстрее Python в 1.3 раза (не в 1.7). Цифры в [benchmarks.md](benchmarks.md).
+- [x] Swift-декод TDT ускорен со 144x до 185x без изменения текста; лимит GPU-кеша
+  теперь применяется во всех командах CLI, а не только в `serve` (пик на часовом файле
+  27 GB -> 3.6 GB).
 
 ### Контекст для продолжения (достаточно для новой сессии)
 
@@ -153,7 +156,7 @@ FluidAudio - CoreML/ANE вместо MLX.
   `nn.quantize(model.encoder, bits=8, group_size=64)` + `load_weights` (реализовано в
   `src/asr/parakeet_mlx.py::_load_int8`).
 - Замеры для документации уже есть в `docs/benchmarks.md`, раздел «Сторонние модели»:
-  Parakeet 3.99% WER, ~128x realtime Python, 144x Swift (int8: 4.05%, та же скорость); CPU-резерв
+  Parakeet 3.99% WER, ~140x realtime Python, 185x Swift (int8: 4.05%, +9%); CPU-резерв
   (onnx-asr GigaAM int8) 67-75x в докере; faster-whisper turbo int8 19x; Qwen3-ASR 15% -
   как основная модель отброшена.
 
@@ -229,15 +232,18 @@ Swift-порт она не портирована - приложение не о
   но pl/bg/cs есть), качество и скорость замерены ([benchmarks.md](benchmarks.md)).
   Решить, что дешевле: порт GigaAM Multilingual на Swift или движок Parakeet рядом.
 
-### 5. CPU-резерв (готово к продакшену, осталось упаковать)
+### 5. CPU-резерв (сделано 2026-09-23)
 
-Проверено: GigaAM v3 RNNT int8 через `onnx-asr` в CPU-докере даёт 67-75x realtime
-(M4 Max; на Mac mini ожидаемо меньше) при том же качестве, что GPU-версия
-([benchmarks.md](benchmarks.md)). Это резерв, если GPU-путь недоступен.
+Движок `onnx_asr` (`src/asr/onnx_asr.py`) и образ `Dockerfile.onnx`: GigaAM v3 E2E RNNT
+int8, веса запечены в образ, на рантайме сеть не нужна (`--network none`). Образ 1.33 GB,
+модель занимает 422 MB, 47x realtime в контейнере на M4 Max, 84-93x нативно.
+Собирается и на amd64, и на arm64 - в отличие от опубликованного `intabiafusion/oaitt`,
+который только amd64 и тянет PyTorch.
 
-- Собрать образ с запечёнными весами (сейчас качаются при старте), CTC-вариант в
-  onnx-asr сломан - использовать только RNNT.
-- Обёртка с OpenAI-совместимым эндпоинтом, чтобы резерв был drop-in заменой.
+- [ ] Опубликовать образ и перевести `foundation-selfhost` на него (сейчас там
+  `intabiafusion/oaitt:v1.0.0` с движком `gigaam` на PyTorch).
+- CTC-варианты GigaAM в onnx-asr сломаны - только RNNT. У Parakeet сломан int8
+  (мусор на английском), движок сам откатывается на fp32.
 
 ### 6. Мелочи
 

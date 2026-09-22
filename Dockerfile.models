@@ -1,0 +1,79 @@
+# syntax=docker/dockerfile:1
+# Образ с весами моделей - не сервис, а способ доставить их docker-ом и
+# распаковать локально. Build context - data/, а не корень репозитория:
+# корневой .dockerignore вырезает data/* целиком, при контексте data/ он не
+# действует (docker ищет .dockerignore рядом с контекстом).
+#
+# Build:
+#   docker build -f Dockerfile.models -t oaitt-models:latest data
+# Run (экспорт всех моделей в ./data):
+#   docker run --rm -v "$PWD/data:/out" oaitt-models:latest
+# Run (только часть - имена совпадают с верхнеуровневыми папками /models):
+#   docker run --rm -v "$PWD/data:/out" oaitt-models:latest gigaam_mlx parakeet_tdt_v3
+
+FROM python:3.11-slim-bookworm AS onnx-builder
+
+RUN pip install --no-cache-dir "onnx-asr[cpu,hub]"
+
+# Тот же список файлов и тот же репозиторий, что и в Dockerfile.onnx.
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+files = ['config.json', 'v3_e2e_rnnt_encoder.int8.onnx', 'v3_e2e_rnnt_decoder.int8.onnx', 'v3_e2e_rnnt_joint.int8.onnx', 'v3_e2e_rnnt_vocab.txt']; \
+[hf_hub_download('istupakov/gigaam-v3-onnx', f, local_dir='/onnx') for f in files]"
+
+FROM alpine:3.20
+
+# COPY не разыменовывает симлинки - relative-симлинки HF-кеша (snapshots/ -> blobs/)
+# остаются рабочими, т.к. обе папки копируются вместе с той же относительной структурой.
+COPY gigaam_mlx/ /models/gigaam_mlx/
+COPY parakeet_tdt_v3/ /models/parakeet_tdt_v3/
+COPY hub/models--mlx-community--parakeet-tdt-0.6b-v3/ /models/hub/models--mlx-community--parakeet-tdt-0.6b-v3/
+COPY --from=onnx-builder /onnx/ /models/onnx/
+
+RUN { \
+    echo "OAITT model weights - built $(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+    for d in /models/*/; do \
+        echo "$(basename "$d") $(du -sh "$d" | cut -f1)"; \
+    done; \
+    } > /models/MANIFEST.txt
+
+COPY <<'EOF' /usr/local/bin/export-models.sh
+#!/bin/sh
+# Копирует /models в примонтированный /out. Аргументы (опционально) -
+# подмножество верхнеуровневых папок: gigaam_mlx parakeet_tdt_v3 hub onnx.
+# Без аргументов копируются все. FORCE=1 - перезаписать существующие файлы.
+set -eu
+
+if ! awk '$2 == "/out" { f = 1 } END { exit !f }' /proc/mounts; then
+    echo 'Error: /out is not a mounted directory. Run with: docker run --rm -v "$PWD/data:/out" <image> [subset...]' >&2
+    exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+    set -- gigaam_mlx parakeet_tdt_v3 hub onnx
+fi
+
+for name in "$@"; do
+    if [ ! -e "/models/$name" ]; then
+        echo "Error: unknown subset '$name' (expected one of: gigaam_mlx parakeet_tdt_v3 hub onnx)" >&2
+        exit 1
+    fi
+    if [ -e "/out/$name" ] && [ "${FORCE:-0}" != "1" ]; then
+        echo "Error: /out/$name already exists, refusing to overwrite (set FORCE=1)" >&2
+        exit 1
+    fi
+done
+
+for name in "$@"; do
+    echo "Copying $name..."
+    cp -a "/models/$name" "/out/$name"
+    echo "  $name: $(du -sh "/out/$name" | cut -f1)"
+done
+
+cp -f /models/MANIFEST.txt /out/MANIFEST.txt
+echo "Done. Exported: $*"
+EOF
+
+RUN chmod +x /usr/local/bin/export-models.sh
+
+ENTRYPOINT ["/usr/local/bin/export-models.sh"]

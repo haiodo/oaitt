@@ -136,6 +136,9 @@ BENCHMARK_SCRIPTS = [
     {"name": "Parakeet TDT v3 (fp16)", "script": "run_parakeet_mlx.sh",
      "env": {"PARAKEET_VARIANT": "fp16"}, "expected": "parakeet_mlx", "punct": True,
      "words": True},
+    {"name": "onnx-asr GigaAM v3 E2E RNNT (int8)", "script": "run_onnx_asr.sh",
+     "env": {"ONNX_ASR_MODEL": "gigaam-v3-e2e-rnnt"}, "expected": "onnx_asr", "punct": True,
+     "words": True},
 ]
 
 # Whisper-движки держим отдельно - они на порядок медленнее GigaAM на русском,

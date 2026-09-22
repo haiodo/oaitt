@@ -142,7 +142,7 @@ Golos — 3.99% (fp16) против 6.69% у GigaAM RNNT, английские �
 `timestamp_granularities`.
 
 `int8` — квантованный энкодер (8 бит, group_size 64): WER 4.05%, веса ~0.75 GB против ~1.2 GB,
-скорость та же, что у fp16 (~130x на 137s, на коротких чанках Golos int8 быстрее на 10%).
+и на ~9% быстрее fp16 (153x против 140x на 137s; на коротких чанках Golos тот же порядок).
 Дефолт — `fp16`.
 
 Длинное аудио режется по паузам на куски до `PARAKEET_CHUNK_SEC` (20s), как у GigaAM.
@@ -531,6 +531,50 @@ src/
 
 
 ## Docker
+
+### onnx-asr (рекомендуется для CPU)
+
+`Dockerfile.onnx` — образ без PyTorch и MLX: GigaAM v3 E2E RNNT int8 на ONNX Runtime,
+веса запечены в образ, на рантайме сеть не нужна. Собирается и под amd64, и под arm64.
+
+```bash
+docker build -f Dockerfile.onnx -t oaitt-onnx:cpu .
+docker run -d --network none -p 9007:9007 oaitt-onnx:cpu
+```
+
+Образ 1.33 GB, модель в памяти 422 MB, 47x realtime на M4 Max в контейнере.
+Другая модель — через `ONNX_ASR_MODEL` (и `ONNX_ASR_MODEL_DIR`, если веса свои):
+`gigaam-v3-rnnt` без пунктуации, `nemo-parakeet-tdt-0.6b-v3` для 25 языков. У Parakeet
+int8 в апстриме сломан, движок сам откатывается на fp32. CTC-варианты GigaAM в
+onnx-asr 0.12 тоже сломаны — только RNNT.
+
+### Образ с весами моделей
+
+`Dockerfile.models` - не сервис, а способ доставить веса докером и распаковать локально,
+вместо `make prepare` с PyTorch-конвертацией и скачиванием с HuggingFace. Внутри
+`gigaam_mlx` (ctc+rnnt), `parakeet_tdt_v3` (веса Swift-порта), `hub` (HF-кеш Parakeet MLX)
+и `onnx` (GigaAM v3 E2E RNNT int8), всего 5.8 GB. Раскладка повторяет `data/`.
+
+```bash
+docker build -f Dockerfile.models -t oaitt-models:latest data   # контекст - data/, не корень
+docker run --rm -v "$PWD/data:/out" oaitt-models:latest         # всё
+docker run --rm -v "$PWD/data:/out" oaitt-models:latest onnx    # только нужное
+```
+
+Существующие файлы не перезаписываются, для перезаписи - `FORCE=1`. Состав и размеры
+лежат в `MANIFEST.txt` внутри образа и рядом с выгруженными весами.
+
+### Сборка и публикация образов
+
+`./build.sh` без аргументов спрашивает цель (`onnx`, `cpu`, `mlx-cpu`, `models`), имя
+образа, тег, платформы и надо ли пушить, потом собирает. Имя образа запоминается между
+запусками. Неинтерактивно - как раньше, плюс `--target`:
+
+```bash
+./build.sh --target onnx --amd64 --arm64 --push myuser/oaitt-onnx 1.0.0
+```
+
+### GigaAM на PyTorch
 
 Быстрый запуск через Docker (CPU режим):
 

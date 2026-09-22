@@ -5,7 +5,7 @@ ASR реализация для Parakeet-TDT-v3 (NVIDIA, 25 европейски
 `parakeet_mlx` с PyPI. Не требует PyTorch, работает только на Apple Silicon.
 
 Особенности:
-- ~130x realtime на M4 Max
+- ~140x realtime на M4 Max
 - WER на Golos (общий набор) 3.99% - лучше GigaAM RNNT (6.69%)
 - Word-level timestamps и пер-токенная confidence из коробки
 - Длинное аудио режется по паузам на куски до 20s, как у GigaAM

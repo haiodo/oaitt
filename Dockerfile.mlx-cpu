@@ -37,6 +37,16 @@ WORKDIR /app
 # MLX CPU build (Linux x86_64/arm64).
 RUN pip install --no-cache-dir "mlx[cpu]>=0.20.0"
 
+# Колесо mlx[cpu] несёт с собой эталонный netlib BLAS и линкуется на него, а не на
+# системный OpenBLAS: matmul 250x1024x4096 идёт 816ms вместо 12ms, GigaAM выдаёт
+# 0.2x realtime вместо 5.9x. Подменяем библиотеки ссылками на OpenBLAS.
+RUN set -eux; \
+    d=$(python -c "import os, sysconfig; print(os.path.join(sysconfig.get_paths()['purelib'], 'mlx_cpu.libs'))"); \
+    ob=$(readlink -f /usr/lib/*-linux-gnu/openblas-pthread/libopenblas.so.0); \
+    test -f "$ob"; \
+    for f in "$d"/libblas-*.so* "$d"/liblapack-*.so*; do ln -sfn "$ob" "$f"; done; \
+    python -c "import mlx.core as mx; mx.eval(mx.ones((2, 2)) @ mx.ones((2, 2)))"
+
 # Audio + ML lite stack (no PyTorch).
 RUN pip install --no-cache-dir \
     numpy \
