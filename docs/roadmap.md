@@ -156,7 +156,7 @@ FluidAudio - CoreML/ANE вместо MLX.
   `nn.quantize(model.encoder, bits=8, group_size=64)` + `load_weights` (реализовано в
   `src/asr/parakeet_mlx.py::_load_int8`).
 - Замеры для документации уже есть в `docs/benchmarks.md`, раздел «Сторонние модели»:
-  Parakeet 3.99% WER, ~140x realtime Python, 185x Swift (int8: 4.05%, +9%); CPU-резерв
+  Parakeet 3.99% WER, ~138x realtime Python, 170x Swift (int8: 4.05%, +6-9%); CPU-резерв
   (onnx-asr GigaAM int8) 67-75x в докере; faster-whisper turbo int8 19x; Qwen3-ASR 15% -
   как основная модель отброшена.
 
@@ -264,3 +264,4 @@ int8, веса запечены в образ, на рантайме сеть н
 | CTC vs RNNT расхождение как сигнал неуверенности | Головы сидят на одном энкодере и ошибаются согласованно; расхождение означает «CTC ошибся», не «вход трудный» |
 | Склейка чанков ради качества | WER не меняется, проблема не в длине |
 | Чанки длиннее 30s | Attention растёт как O(T^2): 60s медленнее двух по 30s |
+| GigaAM MLX в bf16 вместо fp32 | Весов вдвое меньше (849 -> 425 MB) и WER тот же 6.74%, но Swift теряет 12%: 290x -> 254x в чередующихся прогонах |
