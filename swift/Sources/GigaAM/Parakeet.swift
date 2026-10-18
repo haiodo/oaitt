@@ -1,7 +1,6 @@
 // NVIDIA Parakeet-TDT-v3 (600M, 25 European languages) on MLX Swift.
 // Port of the parakeet_mlx Python package - weight keys must stay identical to
-// data/parakeet_tdt_v3/weights.safetensors (converted by
-// scripts/convert_parakeet_to_mlx_swift.py from mlx-community/parakeet-tdt-0.6b-v3).
+// model.safetensors of mlx-community/parakeet-tdt-0.6b-v3.
 //
 // Architecture: FastConformer encoder (24 layers, d_model 1024, 8 heads, rel_pos
 // attention, depthwise-conv subsampling x8) + TDT predictor/joint with a duration

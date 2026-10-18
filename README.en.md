@@ -68,6 +68,19 @@ Swift is faster on a single request and holds far steadier latency (p50 to max s
 6% against 4.5x), and uses 2.2x less unified memory. It does not scale inside a process,
 so throughput there comes from running several: 144x, 263x, 369x for one, two, four.
 
+Old hardware: i7-4790K (Haswell, 4 cores) and GeForce GTX 970 (Maxwell, 4 GB), GigaAM v3
+E2E RNNT over HTTP, the same file and 2.5 s chunks.
+
+| variant | WER Golos | long file | chunks c=1 / c=8 |
+|---|---|---|---|
+| CPU, `onnx_asr` int8 (`Dockerfile.onnx` image) | 6.79% | 25x | 16x / 23x |
+| GPU, `gigaam` PyTorch, as the service ships | 7.47% | 35x | 7x / 7x |
+| GPU, `onnx_asr` fp32 on CUDA | **6.69%** | **87x** | **59x / 84x** |
+
+`onnx_asr` on CUDA has only been tried as an experiment: the service runs this engine on
+CPU. This card sits at a software ceiling - driver 580, CUDA 12.x, `onnxruntime-gpu`
+1.19.2, PyTorch 2.14 - and an OS upgrade does not move it.
+
 Full numbers, including what was measured and rejected, are in
 [`docs/benchmarks.md`](docs/benchmarks.md).
 

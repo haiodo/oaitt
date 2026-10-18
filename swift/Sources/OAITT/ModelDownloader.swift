@@ -1,8 +1,9 @@
 // Fetches model weights from HuggingFace on first use.
 //
-// The weights are not shipped inside the app: CTC and RNNT are about 850 MB each, and
-// together they would push the release asset close to GitHub's per-file limit. They are
-// public and MIT-licensed, so downloading them on demand is both legal and smaller.
+// The weights are not shipped inside the app: CTC and RNNT are about 850 MB each, Parakeet
+// is 2.5 GB (fp32), and together they would blow past GitHub's per-file limit for the
+// release asset. They are public and openly licensed, so downloading on demand is both
+// legal and smaller.
 
 import Foundation
 import Observation
@@ -13,6 +14,8 @@ struct RemoteModel: Identifiable, Sendable, Codable, Equatable {
     let title: String
     let repository: String
     let directory: String
+    /// Absent in models saved by older versions, so it must stay optional for decoding.
+    var files: [String]?
 
     static let builtin: [RemoteModel] = [
         RemoteModel(
@@ -21,9 +24,15 @@ struct RemoteModel: Identifiable, Sendable, Codable, Equatable {
         RemoteModel(
             id: "rnnt", title: "GigaAM v3 RNNT - more accurate",
             repository: "aystream/GigaAM-v3-e2e-rnnt-mlx", directory: "rnnt"),
+        parakeet,
     ]
 
-    static let files = ["weights.safetensors", "tokenizer.model"]
+    static let parakeet = RemoteModel(
+        id: "parakeet", title: "Parakeet TDT v3 - multilingual, 2.5 GB",
+        repository: "mlx-community/parakeet-tdt-0.6b-v3", directory: "parakeet_tdt_v3",
+        files: ["config.json", "model.safetensors"])
+
+    var requiredFiles: [String] { files ?? ["weights.safetensors", "tokenizer.model"] }
 
     func url(for file: String) -> URL? {
         URL(string: "https://huggingface.co/\(repository)/resolve/main/\(file)")
@@ -67,7 +76,7 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
 
     func isInstalled(_ model: RemoteModel, in directory: String) -> Bool {
         let base = URL(fileURLWithPath: directory).appendingPathComponent(model.directory)
-        return RemoteModel.files.allSatisfy {
+        return model.requiredFiles.allSatisfy {
             FileManager.default.fileExists(atPath: base.appendingPathComponent($0).path)
         }
     }
@@ -82,7 +91,7 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
         let base = URL(fileURLWithPath: directory).appendingPathComponent(model.directory)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
 
-        let pending = RemoteModel.files.compactMap { file -> (url: URL, target: URL)? in
+        let pending = model.requiredFiles.compactMap { file -> (url: URL, target: URL)? in
             guard let url = model.url(for: file) else { return nil }
             return (url, base.appendingPathComponent(file))
         }
@@ -91,10 +100,10 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
         progress[model.id] = 0
         errors[model.id] = nil
         lock.withLock { queues[model.id] = pending }
-        startNext(modelID: model.id)
+        startNext(modelID: model.id, fileCount: pending.count)
     }
 
-    private func startNext(modelID: String) {
+    private func startNext(modelID: String, fileCount: Int) {
         let next: (url: URL, target: URL)? = lock.withLock {
             guard var queue = queues[modelID], !queue.isEmpty else { return nil }
             let item = queue.removeFirst()
@@ -115,8 +124,7 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
         lock.withLock {
             jobs[task.taskIdentifier] = Job(
                 modelID: modelID, target: next.target,
-                fileIndex: RemoteModel.files.count - remaining - 1,
-                fileCount: RemoteModel.files.count)
+                fileIndex: fileCount - remaining - 1, fileCount: fileCount)
         }
         task.resume()
     }
@@ -163,7 +171,7 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
             }
             return
         }
-        startNext(modelID: job.modelID)
+        startNext(modelID: job.modelID, fileCount: job.fileCount)
     }
 
     func urlSession(
@@ -316,8 +324,10 @@ struct AddModelSheet: View {
 struct ServedModelsView: View {
     @Bindable var settings: AppSettings
 
+    // Parakeet is only ever the default model: the CLI cannot serve it as an extra one.
     private var models: [RemoteModel] {
-        RemoteModel.builtin + RemoteModel.decode(settings.customModels)
+        (RemoteModel.builtin + RemoteModel.decode(settings.customModels))
+            .filter { $0.id != RemoteModel.parakeet.id }
     }
 
     var body: some View {

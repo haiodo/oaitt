@@ -1,6 +1,6 @@
-// Parakeet TDT as an ASREngine: loads data/parakeet_tdt_v3 (weights.safetensors,
-// filterbanks.safetensors, vocab.txt from scripts/convert_parakeet_to_mlx_swift.py),
-// chunks audio like GigaAMTranscriber and emits Segments with word timestamps.
+// Parakeet TDT as an ASREngine: loads an mlx-community/parakeet-tdt-0.6b-v3 directory
+// (config.json + model.safetensors), chunks audio like GigaAMTranscriber and emits
+// Segments with word timestamps.
 
 import Foundation
 import MLX
@@ -22,6 +22,7 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
     let maxChunkSec: Double
 
     private let modelDir: URL
+    private let castToBF16: Bool
     private var model: ParakeetTDTModel?
     private let loadLock = NSLock()
     private var lastActivity = Date()
@@ -30,23 +31,20 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
 
     public init(
         modelDir: URL, idleTimeout: TimeInterval = 0,
-        maxChunkSec: Double = 20.0
+        maxChunkSec: Double = 20.0, castToBF16: Bool = false
     ) throws {
         self.modelDir = modelDir
+        self.castToBF16 = castToBF16
         self.idleTimeout = idleTimeout
         self.maxChunkSec = maxChunkSec
 
         let fm = FileManager.default
-        let weights = modelDir.appendingPathComponent("weights.safetensors")
-        let banks = modelDir.appendingPathComponent("filterbanks.safetensors")
-        let vocab = modelDir.appendingPathComponent("vocab.txt")
-        guard fm.fileExists(atPath: weights.path),
-            fm.fileExists(atPath: banks.path),
-            fm.fileExists(atPath: vocab.path)
+        guard fm.fileExists(atPath: modelDir.appendingPathComponent("model.safetensors").path),
+            fm.fileExists(atPath: modelDir.appendingPathComponent("config.json").path)
         else {
             throw AudioError.decodeFailed(
-                "parakeet weights/filterbanks/vocab missing in \(modelDir.path); "
-                    + "run scripts/convert_parakeet_to_mlx_swift.py")
+                "model.safetensors/config.json missing in \(modelDir.path); "
+                    + "expected the mlx-community/parakeet-tdt-0.6b-v3 layout")
         }
         _ = try loaded()
         startIdleMonitor()
@@ -56,19 +54,32 @@ public final class ParakeetTranscriber: ASREngine, @unchecked Sendable {
         try loadLock.withLock {
             if let model { return model }
 
-            // The file ends with a newline; the trailing empty line is not a token.
-            let vocab = try String(
-                contentsOf: modelDir.appendingPathComponent("vocab.txt"), encoding: .utf8
-            )
-            .components(separatedBy: "\n").filter { !$0.isEmpty }
-            let banks = try MLX.loadArrays(
-                url: modelDir.appendingPathComponent("filterbanks.safetensors"))
-            guard let filterbanks = banks["filterbanks"] else {
-                throw AudioError.decodeFailed("filterbanks.safetensors has no 'filterbanks' key")
+            let config = try JSONSerialization.jsonObject(
+                with: Data(contentsOf: modelDir.appendingPathComponent("config.json")))
+            guard let root = config as? [String: Any],
+                let pre = root["preprocessor"] as? [String: Any],
+                let joint = root["joint"] as? [String: Any],
+                let vocab = joint["vocabulary"] as? [String],
+                let sampleRate = pre["sample_rate"] as? Int,
+                let nFFT = pre["n_fft"] as? Int,
+                let features = pre["features"] as? Int
+            else {
+                throw AudioError.decodeFailed("config.json lacks preprocessor/joint.vocabulary")
             }
+            // The mel and STFT code uses fixed constants; refuse a config they do not match.
+            guard sampleRate == ParakeetMel.sampleRate, nFFT == ParakeetMel.nFFT,
+                features == ParakeetMel.nMels
+            else {
+                throw AudioError.decodeFailed("unsupported preprocessor settings in config.json")
+            }
+            let filterbanks = ParakeetMel.slaneyFilterbank(
+                sampleRate: sampleRate, nFFT: nFFT, nMels: features)
             let network = ParakeetTDTModel(vocabulary: vocab, filterbanks: filterbanks)
-            let weights = try MLX.loadArrays(
-                url: modelDir.appendingPathComponent("weights.safetensors"))
+            var weights = try MLX.loadArrays(
+                url: modelDir.appendingPathComponent("model.safetensors"))
+            if castToBF16 {
+                weights = weights.mapValues { $0.asType(.bfloat16) }
+            }
             try network.update(
                 parameters: ModuleParameters.unflattened(weights),
                 verify: .all)

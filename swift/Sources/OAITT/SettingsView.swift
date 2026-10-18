@@ -23,7 +23,7 @@ struct SettingsView: View {
                 Text(
                     "MLX does not scale inside a single process - a pool of model copies "
                         + "there changes nothing. Throughput comes from more processes, each "
-                        + "holding its own weights (about 850 MB)."
+                        + "holding its own weights (about 850 MB for GigaAM, 1.2-2.4 GB for Parakeet)."
                 )
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -98,6 +98,13 @@ struct SettingsView: View {
                 Picker("Default model", selection: $settings.modelType) {
                     Text("CTC - faster").tag("ctc")
                     Text("RNNT - more accurate").tag("rnnt")
+                    Text("Parakeet TDT v3").tag(RemoteModel.parakeet.id)
+                }
+                if settings.modelType == RemoteModel.parakeet.id {
+                    Toggle("Parakeet in bf16", isOn: $settings.parakeetBf16)
+                    Text("Halves GPU memory per worker (about 1.2 GB instead of 2.4 GB).")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 ServedModelsView(settings: settings)
 

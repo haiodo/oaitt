@@ -77,7 +77,7 @@ FluidAudio - CoreML/ANE вместо MLX.
 3. `ParakeetTranscriber`: реализация `ASREngine`, сегменты из токенов, bucket-padding
    сохраняется.
 4. Подключение: `Registry.known` + `parakeet-tdt-v3`, `ModelOptions` в CLI,
-   `Supervisor`/`ModelDownloader` приложения (веса `data/parakeet_tdt_v3/`, докачка).
+   `Supervisor`/`ModelDownloader` приложения (веса - HF-снимок mlx-community в `parakeet_tdt_v3/`, докачка).
 5. Верификация: побуквенное совпадение с Python-портом на тест-файлах (как делали для
    RNNT), bench в `benchmarks.md`, `make check`.
 
@@ -107,8 +107,8 @@ FluidAudio - CoreML/ANE вместо MLX.
 
 ### Прогресс этапа 2 (Swift-порт)
 
-- [x] Веса: `scripts/convert_parakeet_to_mlx_swift.py` -> `data/parakeet_tdt_v3/`
-  (weights bf16, filterbanks librosa-slaney, vocab.txt).
+- [x] Веса: каталог mlx-community напрямую (`config.json` + `model.safetensors`),
+  фильтрбанк librosa-slaney считается в Swift, bf16 - опция `--parakeet-bf16`.
 - [x] Модель: `Parakeet.swift` (FastConformer 24 слоя, rel_pos attention, TDT-декод),
   `ParakeetFeatures.swift` (log-mel, PE), `ParakeetTranscriber.swift` (ASREngine,
   слова из piece'ов по ведущему пробелу).
@@ -117,7 +117,7 @@ FluidAudio - CoreML/ANE вместо MLX.
 - [x] Верификация: текст побуквенно совпадает с Python `parakeet-mlx` на 10s и на
   137.4s одним чанком (`--max-chunk-sec 200`); `make check` зелёный; серверный тест:
   words в ответе; 20 запросов - память плоская.
-- [ ] Приложение: воркер Parakeet в Supervisor/ModelDownloader (CLI и сервер готовы).
+- [x] Приложение: воркер Parakeet в Supervisor/ModelDownloader (CLI и сервер готовы).
 - [ ] Батчевый декод чанков (сейчас чанк за чанком; у TDT для этого есть duration-джампы).
 
 Этап 2 по сервису и CLI закрыт. Уроки порта зафиксированы в [swift-port.md](swift-port.md).

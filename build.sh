@@ -65,7 +65,7 @@ target_prereqs() {
         onnx) echo "" ;;
         cpu) echo "data/gigaam" ;;
         mlx-cpu) echo "data/gigaam_mlx" ;;
-        models) echo "data/gigaam_mlx data/parakeet_tdt_v3 data/hub/models--mlx-community--parakeet-tdt-0.6b-v3" ;;
+        models) echo "data/gigaam_mlx data/hub/models--mlx-community--parakeet-tdt-0.6b-v3" ;;
         *) return 1 ;;
     esac
 }

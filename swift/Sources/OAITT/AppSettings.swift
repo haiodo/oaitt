@@ -11,6 +11,7 @@ final class AppSettings {
     var port: Int { didSet { store(port, "port") } }
     var workerBasePort: Int { didSet { store(workerBasePort, "workerBasePort") } }
     var modelType: String { didSet { store(modelType, "modelType") } }
+    var parakeetBf16: Bool { didSet { store(parakeetBf16, "parakeetBf16") } }
     var extraModels: String { didSet { store(extraModels, "extraModels") } }
     var modelCacheDir: String { didSet { store(modelCacheDir, "modelCacheDir") } }
     var apiKey: String { didSet { store(apiKey, "apiKey") } }
@@ -36,6 +37,7 @@ final class AppSettings {
         port = d.object(forKey: "port") as? Int ?? 9007
         workerBasePort = d.object(forKey: "workerBasePort") as? Int ?? 9010
         modelType = d.string(forKey: "modelType") ?? "rnnt"
+        parakeetBf16 = d.bool(forKey: "parakeetBf16")
         extraModels = d.string(forKey: "extraModels") ?? ""
         modelCacheDir = d.string(forKey: "modelCacheDir") ?? Self.defaultModelDir.path
         apiKey = d.string(forKey: "apiKey") ?? "key"

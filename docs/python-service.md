@@ -552,8 +552,8 @@ onnx-asr 0.12 тоже сломаны — только RNNT.
 
 `Dockerfile.models` - не сервис, а способ доставить веса докером и распаковать локально,
 вместо `make prepare` с PyTorch-конвертацией и скачиванием с HuggingFace. Внутри
-`gigaam_mlx` (ctc+rnnt), `parakeet_tdt_v3` (веса Swift-порта), `hub` (HF-кеш Parakeet MLX)
-и `onnx` (GigaAM v3 E2E RNNT int8), всего 5.8 GB. Раскладка повторяет `data/`.
+`gigaam_mlx` (ctc+rnnt), `hub` (HF-кеш Parakeet MLX, его же читает Swift-порт)
+и `onnx` (GigaAM v3 E2E RNNT int8), всего около 4.5 GB. Раскладка повторяет `data/`.
 
 ```bash
 docker build -f Dockerfile.models -t oaitt-models:latest data   # контекст - data/, не корень

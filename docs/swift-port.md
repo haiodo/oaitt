@@ -100,12 +100,13 @@ ParakeetFeatures.swift  log-mel (преэмфаза, reflect-паддинг, |re
 ParakeetTranscriber.swift  ASREngine: чанкинг без паддинга, слова из piece'ов
 ```
 
-Веса - `data/parakeet_tdt_v3/` (weights bf16 + filterbanks librosa + vocab), готовит
-`scripts/convert_parakeet_to_mlx_swift.py`. Запуск:
+Веса - каталог `mlx-community/parakeet-tdt-0.6b-v3` как есть (`config.json` +
+`model.safetensors`, fp32); словарь берётся из `config.json`, mel-фильтрбанк считается
+в Swift (порт librosa slaney). `--parakeet-bf16` приводит веса к bf16. Запуск:
 
 ```bash
-swift/.build/release/oaitt-swift transcribe file.wav --parakeet-dir data/parakeet_tdt_v3
-swift/.build/release/oaitt-swift serve --parakeet-dir data/parakeet_tdt_v3 --port 8301
+swift/.build/release/oaitt-swift transcribe file.wav --parakeet-dir <каталог snapshot mlx-community>
+swift/.build/release/oaitt-swift serve --parakeet-dir <каталог snapshot mlx-community> --port 8301
 ```
 
 `verbose_json` отдаёт `words` с границами и вероятностью (у Parakeet они есть из коробки,

@@ -63,10 +63,14 @@ final class Supervisor: @unchecked Sendable {
 
     /// Понятное сообщение вместо падения воркера: чего именно не хватает и где искали.
     static func missingWeights(settings: AppSettings) -> String? {
+        let model =
+            settings.modelType == RemoteModel.parakeet.id
+            ? RemoteModel.parakeet
+            : RemoteModel(
+                id: settings.modelType, title: "", repository: "", directory: settings.modelType)
         let directory = URL(fileURLWithPath: settings.modelCacheDir)
-            .appendingPathComponent(settings.modelType)
-        let files = ["weights.safetensors", "tokenizer.model"]
-        let absent = files.filter {
+            .appendingPathComponent(model.directory)
+        let absent = model.requiredFiles.filter {
             !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
         }
         guard !absent.isEmpty else { return nil }
@@ -137,8 +141,18 @@ final class Supervisor: @unchecked Sendable {
             var arguments = [
                 "serve", "--host", direct ? host : "127.0.0.1", "--port", String(port),
                 "--model-cache-dir", settings.modelCacheDir,
-                "--model-type", settings.modelType,
             ]
+            if settings.modelType == RemoteModel.parakeet.id {
+                // --model-type stays default: with --parakeet-dir the worker ignores it.
+                arguments += [
+                    "--parakeet-dir",
+                    URL(fileURLWithPath: settings.modelCacheDir)
+                        .appendingPathComponent(RemoteModel.parakeet.directory).path,
+                ]
+                if settings.parakeetBf16 { arguments.append("--parakeet-bf16") }
+            } else {
+                arguments += ["--model-type", settings.modelType]
+            }
             if settings.idleTimeout > 0 {
                 arguments += ["--idle-timeout", String(settings.idleTimeout)]
             }

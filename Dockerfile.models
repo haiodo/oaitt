@@ -9,7 +9,7 @@
 # Run (экспорт всех моделей в ./data):
 #   docker run --rm -v "$PWD/data:/out" oaitt-models:latest
 # Run (только часть - имена совпадают с верхнеуровневыми папками /models):
-#   docker run --rm -v "$PWD/data:/out" oaitt-models:latest gigaam_mlx parakeet_tdt_v3
+#   docker run --rm -v "$PWD/data:/out" oaitt-models:latest gigaam_mlx hub
 
 FROM python:3.11-slim-bookworm AS onnx-builder
 
@@ -26,7 +26,6 @@ FROM alpine:3.20
 # COPY не разыменовывает симлинки - relative-симлинки HF-кеша (snapshots/ -> blobs/)
 # остаются рабочими, т.к. обе папки копируются вместе с той же относительной структурой.
 COPY gigaam_mlx/ /models/gigaam_mlx/
-COPY parakeet_tdt_v3/ /models/parakeet_tdt_v3/
 COPY hub/models--mlx-community--parakeet-tdt-0.6b-v3/ /models/hub/models--mlx-community--parakeet-tdt-0.6b-v3/
 COPY --from=onnx-builder /onnx/ /models/onnx/
 
@@ -40,7 +39,7 @@ RUN { \
 COPY <<'EOF' /usr/local/bin/export-models.sh
 #!/bin/sh
 # Копирует /models в примонтированный /out. Аргументы (опционально) -
-# подмножество верхнеуровневых папок: gigaam_mlx parakeet_tdt_v3 hub onnx.
+# подмножество верхнеуровневых папок: gigaam_mlx hub onnx.
 # Без аргументов копируются все. FORCE=1 - перезаписать существующие файлы.
 set -eu
 
@@ -50,12 +49,12 @@ if ! awk '$2 == "/out" { f = 1 } END { exit !f }' /proc/mounts; then
 fi
 
 if [ "$#" -eq 0 ]; then
-    set -- gigaam_mlx parakeet_tdt_v3 hub onnx
+    set -- gigaam_mlx hub onnx
 fi
 
 for name in "$@"; do
     if [ ! -e "/models/$name" ]; then
-        echo "Error: unknown subset '$name' (expected one of: gigaam_mlx parakeet_tdt_v3 hub onnx)" >&2
+        echo "Error: unknown subset '$name' (expected one of: gigaam_mlx hub onnx)" >&2
         exit 1
     fi
     if [ -e "/out/$name" ] && [ "${FORCE:-0}" != "1" ]; then

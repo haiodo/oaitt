@@ -1,6 +1,6 @@
 // Parakeet feature extraction and attention primitives.
 // Log-mel matches the NeMo preprocessing of parakeet_mlx (preemph, reflect-padded
-// STFT, slaney filterbanks loaded from the conversion script); the attention carries
+// STFT, slaney filterbanks ported from librosa); the attention carries
 // relative positional bias instead of RoPE.
 
 import Foundation
@@ -21,8 +21,39 @@ class ParakeetMel {
     let window: MLXArray  // (winLength,)
     let filterbanks: MLXArray  // (nMels, nFFT/2+1)
 
-    /// filterbanks come from librosa (slaney norm) via the conversion script - the
-    /// formula is easy to get subtly wrong, so Swift loads the exact array.
+    /// Port of librosa.filters.mel(fmin=0, fmax=sr/2, htk=False, norm="slaney"), computed
+    /// in Double like numpy and rounded to Float32 at the end.
+    static func slaneyFilterbank(sampleRate: Int, nFFT: Int, nMels: Int) -> MLXArray {
+        let fSp = 200.0 / 3.0
+        let minLogHz = 1000.0
+        let minLogMel = minLogHz / fSp
+        let logStep = log(6.4) / 27.0
+        func hzToMel(_ f: Double) -> Double {
+            f >= minLogHz ? minLogMel + log(f / minLogHz) / logStep : f / fSp
+        }
+        func melToHz(_ m: Double) -> Double {
+            m >= minLogMel ? minLogHz * exp(logStep * (m - minLogMel)) : fSp * m
+        }
+        let melMax = hzToMel(Double(sampleRate) / 2)
+        let melPoints = (0..<(nMels + 2)).map {
+            melToHz(melMax * Double($0) / Double(nMels + 1))
+        }
+        let nBins = nFFT / 2 + 1
+        let binHz = (0..<nBins).map { Double($0) * Double(sampleRate) / Double(nFFT) }
+        var weights = [Float](repeating: 0, count: nMels * nBins)
+        for m in 0..<nMels {
+            let lowerStep = melPoints[m + 1] - melPoints[m]
+            let upperStep = melPoints[m + 2] - melPoints[m + 1]
+            let norm = 2.0 / (melPoints[m + 2] - melPoints[m])
+            for k in 0..<nBins {
+                let lower = (binHz[k] - melPoints[m]) / lowerStep
+                let upper = (melPoints[m + 2] - binHz[k]) / upperStep
+                weights[m * nBins + k] = Float(max(0, min(lower, upper)) * norm)
+            }
+        }
+        return MLXArray(weights, [nMels, nBins])
+    }
+
     init(filterbanks: MLXArray) {
         self.filterbanks = filterbanks
         // np.hanning(winLength + 1)[:-1] == periodic Hann of length winLength.

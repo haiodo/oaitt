@@ -75,5 +75,5 @@ cmake -B CrispASR/build -DCMAKE_BUILD_TYPE=Release && cmake --build CrispASR/bui
 crispasr --backend gigaam -m gigaam-v3-rnnt-f16.gguf -f audio.wav -otxt -of out
 ```
 
-oaitt: `swift/.build/release/oaitt-swift transcribe --parakeet-dir data/parakeet_tdt_v3
+oaitt: `swift/.build/release/oaitt-swift transcribe --parakeet-dir data/hub/models--mlx-community--parakeet-tdt-0.6b-v3/snapshots/<hash>
 --max-chunk-sec 200 audio.wav` (GigaAM: `--model-type rnnt|ctc --model-cache-dir data/gigaam_mlx`).

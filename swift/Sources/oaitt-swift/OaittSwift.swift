@@ -23,10 +23,12 @@ struct ModelOptions: ParsableArguments {
     var modelType: GigaAMModelType = .ctc
 
     /// Non-empty switches the whole service to Parakeet TDT v3
-    /// (weights.safetensors + filterbanks.safetensors + vocab.txt, see
-    /// scripts/convert_parakeet_to_mlx_swift.py).
-    @Option(name: .long, help: "Directory with converted Parakeet TDT v3 weights.")
+    /// (config.json + model.safetensors, the mlx-community/parakeet-tdt-0.6b-v3 layout).
+    @Option(name: .long, help: "Directory with mlx-community/parakeet-tdt-0.6b-v3 files.")
     var parakeetDir = ""
+
+    @Flag(name: .long, help: "Cast Parakeet weights to bfloat16 (default: fp32 as published).")
+    var parakeetBf16 = false
 
     @Option(help: "Max chunk length before splitting, seconds.")
     var maxChunkSec = 20.0
@@ -89,7 +91,7 @@ struct ModelOptions: ParsableArguments {
         if !parakeetDir.isEmpty {
             return try ParakeetTranscriber(
                 modelDir: URL(fileURLWithPath: parakeetDir), idleTimeout: idleTimeout,
-                maxChunkSec: maxChunkSec)
+                maxChunkSec: maxChunkSec, castToBF16: parakeetBf16)
         }
         let dir = URL(fileURLWithPath: modelCacheDir).appendingPathComponent(modelType.rawValue)
         return try GigaAMTranscriber(
